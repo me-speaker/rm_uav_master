@@ -1,0 +1,28 @@
+/**:
+  ros__parameters:
+    # ---- topic wiring ------------------------------------------------------
+    odom_topic:          "/Odometry"   # FAST-LIO nav_msgs/Odometry
+    vision_pose_topic:   "/mavros/vision_pose/pose"     # MAVROS -> PX4 EKF2
+    vision_speed_topic:  "/mavros/vision_speed/speed_twist"
+
+    # ---- frame ids ---------------------------------------------------------
+    world_frame_id:  "map"          # MAVROS / PX4 convention
+    odom_frame_id:   "odom"          # child of map, parent of base_link
+    base_frame_id:   "base_link"     # drone body
+    lidar_frame_id:  "livox_frame"   # FAST-LIO input cloud frame
+
+    # ---- extrinsic: lidar mount on drone body ------------------------------
+    # T_lidar_to_base_link. The LiDAR sits 5cm above the FCU and is rotated
+    # 180deg about Z so its "forward" is opposite to drone's "forward" (common
+    # Mid-360 mounting). Adjust per airframe.
+    lidar_to_base_xyz: [0.0, 0.0, -0.05]   # m, in base_link frame
+    lidar_to_base_rpy: [0.0, 0.0, 3.14159] # rad (roll, pitch, yaw)
+
+    # ---- behaviour toggles -------------------------------------------------
+    publish_tf:           true
+    publish_speed:        true
+    publish_vision_pose:  true
+
+    # ---- rate / watchdog ---------------------------------------------------
+    target_rate_hz:     50.0
+    frame_timeout_sec:   1.0

@@ -1,0 +1,247 @@
+# =============================================================================
+# Dockerfile.uav — 机载 SLAM+MAVROS 镜像 (v3.0, FROM-SCRATCH, multi-arch)
+# =============================================================================
+# 用途: 部署到无人机小电脑 (amd64 / arm64 Jetson). 源码**不**打进镜像,
+#       运行时由 docker run -v 挂载, 改代码即时生效.
+#
+# 起点: bare Ubuntu 22.04 (任意架构, multi-arch 官方)
+#       国内拉不到 osrf/ros:humble-desktop arm 版本, 所以从 0 装
+#
+# 自带的 (baked-in):
+#   - ROS 2 Humble (从 apt 装, 国内清华源镜像)
+#   - MAVROS + MAVROS-Extras (从 apt 装)
+#   - GeographicLib datasets (PX4 EKF2 视觉融合用)
+#   - Livox-SDK2 v1.3.1 (源码编译, install 到 /usr/local)
+#   - SLAM 编译链: libeigen3 libpcl libyaml-cpp glog gflags
+#   - ODIN USB 雷达依赖: libusb libssl OpenCV ROS msg pkgs
+#   - GUI 栈 (默认): rviz2 Xvfb x11vnc noVNC
+#   - 启动脚本 (uav_bringup.launch.py / start_uav_gui.sh / entrypoint)
+#   - udev rules (Livox USB + ODIN USB vendor 2207:0019)
+#
+# 运行时挂载:
+#   -v <host>/rm_ws/src:/opt/uav_ws/src    # 源码, 改完即时生效
+#   --device /dev/ttyUSB0                   # PX4 USB (任意架构)
+#   --device /dev/bus/usb/.../...           # ODIN USB (vendor 2207:0019)
+#   --network host                          # Mid360 UDP (ODIN 不需要)
+#
+# 容器 entrypoint:
+#   - 首次启动: 自动 colcon build (检测 install/setup.bash 是否存在)
+#   - 之后: 直接 source install/setup.bash, 跑 launch
+#
+# Build (amd64 / arm64 都用同样命令, 自动):
+#   docker build -f Dockerfile.uav -t uavsim:uav-v3.0 .
+#
+# Build (在 Jetson arm64 上):
+#   bash scripts/build_arm64.sh
+#
+# Build (x86 dev 机上 cross-arm64):
+#   bash scripts/build_multiarch.sh --arch arm64
+# =============================================================================
+
+# ---- Build args --------------------------------------------------------------
+ARG BASE_IMAGE=ubuntu:22.04
+ARG ROS_DISTRO=humble
+ARG ROS_APT_MIRROR=tsinghua   # tsinghua | huawei | official
+ARG WITH_GUI=yes
+
+FROM ${BASE_IMAGE} AS uav
+
+LABEL maintainer="rm_ws Project <speaker@example.com>" \
+      version="3.0" \
+      description="Onboard drone image (from-scratch): bare Ubuntu + ROS2 + MAVROS + Livox SDK + SLAM deps. Multi-arch (amd64/arm64). Source mounted at runtime."
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ROS_DISTRO=${ROS_DISTRO}
+ENV UAV_WS=/opt/uav_ws
+ENV LIVOX_SDK_PATH=/opt/Livox-SDK2
+
+# Locale (ROS 必需)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        locales curl gnupg2 lsb-release ca-certificates sudo \
+    && locale-gen en_US.UTF-8 \
+    && rm -rf /var/lib/apt/lists/*
+ENV LANG=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
+
+SHELL ["/bin/bash", "-c"]
+
+# =============================================================================
+# 1. ROS 2 apt source + 装 ROS (Desktop 完整版含 rviz2)
+# =============================================================================
+# 国内网络用清华源, 国外用官方源. ARG ROS_APT_MIRROR 控制.
+RUN if [ "${ROS_APT_MIRROR}" = "tsinghua" ]; then \
+        # 清华源 (国内推荐, 国内 10x 快, 跟 packages.ros.org 内容一致)
+        curl -sSL https://mirrors.tuna.tsinghua.edu.cn/rosdistro/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+            > /etc/apt/sources.list.d/ros2.list; \
+    elif [ "${ROS_APT_MIRROR}" = "huawei" ]; then \
+        curl -sSL https://mirrors.huaweicloud.com/rosdistro/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] https://mirrors.huaweicloud.com/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+            > /etc/apt/sources.list.d/ros2.list; \
+    else \
+        # 官方源 (国外)
+        curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+            > /etc/apt/sources.list.d/ros2.list; \
+    fi
+
+# 装 ROS Desktop (含 rviz2, rqt, colcon, rosdep, ...)
+# 包含基础 ROS + navigation2 + perception 等 (完整 desktop)
+# 约 1.5GB 装包
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-desktop \
+        python3-colcon-common-extensions \
+        python3-rosdep \
+        python3-vcstool \
+        python3-argcomplete \
+        python3-rosinstall-generator \
+        python3-numpy \
+    && rm -rf /var/lib/apt/lists/* \
+    && rosdep init 2>/dev/null || true \
+    && (echo "yaml https://mirrors.tuna.tsinghua.edu.cn/rosdistro/ros2/rosdep.yaml" > /etc/ros/rosdep/sources.list.d/99-tsinghua.list 2>/dev/null || true) \
+    && rosdep update 2>&1 | tail -3 || true
+
+# ROS 环境变量 (sourcing setup.bash 在 entrypoint)
+ENV CMAKE_PREFIX_PATH=/opt/ros/${ROS_DISTRO}:/usr/local:${CMAKE_PREFIX_PATH}
+ENV LD_LIBRARY_PATH=/opt/ros/${ROS_DISTRO}/lib:/usr/local/lib:${LD_LIBRARY_PATH}
+ENV PATH=/opt/ros/${ROS_DISTRO}/bin:/usr/local/bin:${PATH}
+ENV PYTHONPATH=/opt/ros/${ROS_DISTRO}/lib/python3.10/site-packages:${PYTHONPATH}
+
+# =============================================================================
+# 2. MAVROS + MAVROS-Extras + GeographicLib datasets
+# =============================================================================
+# mavros 跟 ROS Desktop 是分开装的包, 这里装 (~150MB)
+# GeographicLib 数据集: PX4 EKF2 用 vision_pose 融合时算 geoid 必须
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        ros-${ROS_DISTRO}-mavros \
+        ros-${ROS_DISTRO}-mavros-extras \
+        geographiclib-tools \
+    && /opt/ros/${ROS_DISTRO}/lib/mavros/install_geographiclib_datasets.sh \
+    && rm -rf /var/lib/apt/lists/*
+
+# =============================================================================
+# 3. SLAM 编译依赖 + ODIN USB 雷达驱动依赖 + GUI
+# =============================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        # 基础编译工具
+        git build-essential cmake pkg-config \
+        # SLAM 编译链 (FAST_LIO 需要)
+        libeigen3-dev libpcl-dev libpcl-ros-dev \
+        libyaml-cpp-dev libgoogle-glog-dev libgflags-dev \
+        # ODIN USB 雷达依赖
+        libusb-1.0-0-dev libssl-dev libopencv-dev \
+        # FAST_LIO SLAM ROS 依赖
+        ros-${ROS_DISTRO}-pcl-ros \
+        ros-${ROS_DISTRO}-nav-msgs ros-${ROS_DISTRO}-geometry-msgs \
+        ros-${ROS_DISTRO}-sensor-msgs ros-${ROS_DISTRO}-tf2-ros \
+        ros-${ROS_DISTRO}-tf2-geometry-msgs ros-${ROS_DISTRO}-tf2-sensor-msgs \
+        ros-${ROS_DISTRO}-diagnostic-updater \
+        # ODIN ROS 依赖
+        ros-${ROS_DISTRO}-visualization-msgs \
+        ros-${ROS_DISTRO}-message-filters \
+        ros-${ROS_DISTRO}-image-transport \
+        ros-${ROS_DISTRO}-cv-bridge \
+        ros-${ROS_DISTRO}-rosidl-default-generators \
+        ros-${ROS_DISTRO}-rosidl-default-runtime \
+        # 工具
+        psmisc wget usbutils udev iputils-ping net-tools bash-completion \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# GUI 栈 (默认开, ARG WITH_GUI=no 关掉)
+# rviz2 已经在 ros-humble-desktop 里装了, 这里只需 X server + noVNC
+RUN if [ "${WITH_GUI}" = "yes" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            xvfb x11vnc xserver-xorg-video-dummy mesa-utils \
+            python3-websockify \
+        && rm -rf /var/lib/apt/lists/* \
+        && mkdir -p /opt/novnc && \
+           curl -fsSL https://gh-proxy.com/https://github.com/novnc/noVNC/archive/refs/tags/v1.4.0.tar.gz \
+               | tar -xz --strip-components=1 -C /opt/novnc && \
+           ln -sf /opt/novnc/utils/novnc_proxy /usr/local/bin/novnc_proxy && \
+           rm -rf /opt/novnc/.git; \
+    fi
+
+# =============================================================================
+# 4. Livox-SDK2 v1.3.1 (源码编译到 /usr/local, 30s-2min)
+# =============================================================================
+# ARM64 上 git clone 也正常工作, 只是 cmake build 时间稍长 (从源码编译)
+RUN git clone --branch v1.3.1 --depth 1 --recurse-submodules \
+        https://gh-proxy.com/https://github.com/Livox-SDK/Livox-SDK2.git ${LIVOX_SDK_PATH} || \
+    git clone --branch v1.3.1 --depth 1 --recurse-submodules \
+        https://github.com/Livox-SDK/Livox-SDK2.git ${LIVOX_SDK_PATH} && \
+    cd ${LIVOX_SDK_PATH} && \
+    cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    cmake --build build -j"$(nproc)" --target install && \
+    ldconfig && \
+    rm -rf ${LIVOX_SDK_PATH}/build
+
+# =============================================================================
+# 5. 工作空间结构 (空 src/, 运行时挂载)
+# =============================================================================
+RUN mkdir -p ${UAV_WS}/src ${UAV_WS}/log && \
+    mkdir -p /var/log/uav && \
+    touch ${UAV_WS}/src/.gitkeep
+
+# =============================================================================
+# 6. 启动脚本 (baked-in)
+# =============================================================================
+COPY scripts/uav_bringup.launch.py /opt/uav_ws/uav_bringup.launch.py
+COPY scripts/start_uav_gui.sh      /usr/local/bin/start_uav_gui.sh
+COPY scripts/uav_entrypoint.sh    /usr/local/bin/uav_entrypoint.sh
+RUN chmod +x /usr/local/bin/start_uav_gui.sh /usr/local/bin/uav_entrypoint.sh
+
+# =============================================================================
+# 7. udev rules (Livox USB + ODIN USB)
+# =============================================================================
+COPY scripts/udev/99-livox.rules /etc/udev/rules.d/99-livox.rules
+COPY scripts/udev/99-odin.rules  /etc/udev/rules.d/99-odin.rules
+
+# =============================================================================
+# 8. entrypoint: 首次自动 colcon build, 之后 source
+# =============================================================================
+RUN { \
+        echo '#!/bin/bash'; \
+        echo 'set -e'; \
+        echo 'source "/opt/ros/${ROS_DISTRO}/setup.bash" 2>/dev/null || { echo "[uav_entrypoint] ROS 未装 (base 应该自带)"; exit 1; }'; \
+        echo 'cd ${UAV_WS}'; \
+        echo ''; \
+        echo 'if [ ! -f "${UAV_WS}/install/setup.bash" ]; then'; \
+        echo '    echo "[uav_entrypoint] first run, colcon build (5-10 min on arm64) ..."'; \
+        echo '    # rosdep update (idempotent)'; \
+        echo '    rosdep update 2>/dev/null || true'; \
+        echo '    colcon build --symlink-install \'; \
+        echo '        --packages-select vision_msgs livox_ros_driver2 fast_lio odin_ros_driver slam_to_mavros \'; \
+        echo '        --cmake-args -DCMAKE_BUILD_TYPE=Release \'; \
+        echo '                     -DCMAKE_PREFIX_PATH="/usr/local;/opt/ros/${ROS_DISTRO};${UAV_WS}/install" \'; \
+        echo '        --event-handlers console_direct+'; \
+        echo '    echo "[uav_entrypoint] build done"'; \
+        echo 'fi'; \
+        echo ''; \
+        echo 'source "${UAV_WS}/install/setup.bash" 2>/dev/null || true'; \
+        echo ''; \
+        echo 'export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}'; \
+        echo 'export ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}'; \
+        echo 'export FCU_URL=${FCU_URL:-/dev/ttyUSB0:921600}'; \
+        echo 'export LIVOX_LIDAR_IP=${LIVOX_LIDAR_IP:-192.168.1.1xx}'; \
+        echo 'export VNC_DISPLAY=${VNC_DISPLAY:-99}'; \
+        echo 'export VNC_PORT=${VNC_PORT:-5999}'; \
+        echo 'export NOVNC_PORT=${NOVNC_PORT:-6080}'; \
+        echo ''; \
+        echo 'exec "$@"'; \
+    } > /ros_entrypoint.sh && chmod +x /ros_entrypoint.sh
+
+ENV IMAGE_VERSION=3.0
+ENV WITH_GUI=${WITH_GUI}
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD bash -c 'source /opt/ros/${ROS_DISTRO}/setup.bash && \
+                 [ -f $UAV_WS/install/setup.bash ] && source $UAV_WS/install/setup.bash && \
+                 ros2 pkg list 2>/dev/null | grep -qE "livox_ros_driver2|fast_lio|slam_to_mavros|odin_ros_driver|mavros"' \
+        || exit 1
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]   # 容器启动后给 bash, user 用 --bringup 跑 launch

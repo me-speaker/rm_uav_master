@@ -1,0 +1,12 @@
+# Livox Mid-360 (and other Livox sensors) udev rules
+# Reference: https://github.com/Livox-SDK/livox_ros_driver2
+#
+# Most Livox devices are accessed via SDK / network; USB devices typically present
+# as /dev/ttyACM* or /dev/ttyUSB*. These rules set group permissions so docker
+# containers running with --device=/dev/ttyACM* can read/write directly.
+
+KERNEL=="ttyACM[0-9]*", MODE="0666"
+KERNEL=="ttyUSB[0-9]*", MODE="0666"
+
+# Some Livox devices expose a custom vendor ID
+SUBSYSTEM=="usb", ATTR{idVendor}=="0x04b4", MODE="0666"

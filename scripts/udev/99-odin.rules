@@ -1,0 +1,5 @@
+# ODIN1 USB LiDAR udev rule
+# Vendor 2207 = Fuzhou Rockchip (Odin manufacturer), Product 0019 = ODIN1
+# Without this rule the device will be readable only by root, breaking the
+# driver when run inside a non-root container (host USB passthrough).
+SUBSYSTEM=="usb", ATTR{idVendor}=="2207", ATTR{idProduct}=="0019", MODE="0666", GROUP="plugdev"

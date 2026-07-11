@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>slam_to_mavros</name>
+  <version>0.1.0</version>
+  <description>
+    Bridges FAST-LIO /Odometry (nav_msgs/Odometry) to PX4 via MAVROS
+    vision-pose topics, so PX4 EKF2 fuses SLAM-based position as its
+    primary odometry source for indoor / GPS-denied flight.
+
+    Subscribes:
+      /Odometry            (nav_msgs/Odometry, from fast_lio)
+
+    Publishes:
+      /mavros/vision_pose/pose            (geometry_msgs/PoseStamped)
+      /mavros/vision_speed/speed_twist    (geometry_msgs/TwistStamped, optional)
+      TF: map -> odom (static, identity)  +  odom -> base_link (dynamic, from SLAM)
+
+    Direct mode (default): SLAM first-frame origin == PX4 home. Suitable
+    for indoor hand-takeoff with no GPS pre-align. PX4 will set its EKF2
+    origin to the first received vision pose.
+  </description>
+
+  <maintainer email="525705262@qq.com">speaker</maintainer>
+  <license>TODO: License declaration</license>
+
+  <depend>rclpy</depend>
+  <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2_geometry_msgs</depend>
+  <depend>sensor_msgs</depend>   <!-- only used if future IMU-gravity-align mode is added -->
+
+  <!-- python3-tf-transformations is NOT in apt for jammy; we ship our own
+       minimal quaternion helpers inside the node. -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
