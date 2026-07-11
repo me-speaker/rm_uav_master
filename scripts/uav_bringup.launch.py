@@ -13,15 +13,15 @@
 
 使用:
     # Mid-360 全链路 (默认)
-    ros2 launch /opt/uav_ws/uav_bringup.launch.py \\
+    ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py \\
         lidar:=mid360 lidar_ip:=192.168.1.150 fcu_url:=/dev/ttyUSB0:921600
 
     # ODIN1 全链路 (用 ODIN 自带 SLAM)
-    ros2 launch /opt/uav_ws/uav_bringup.launch.py \\
+    ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py \\
         lidar:=odin fcu_url:=/dev/ttyUSB0:921600
 
     # 带 rviz (需 WITH_GUI=yes 镜像)
-    ros2 launch /opt/uav_ws/uav_bringup.launch.py lidar:=odin with_rviz:=true
+    ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py lidar:=odin with_rviz:=true
 """
 import os
 from launch import LaunchDescription
@@ -79,16 +79,16 @@ def _launch_odin(context, *args, **kwargs):
     The full odin1_ros2.launch.py also pulls pcd2depth / reprojection / overlay
     nodes that need extra config + high CPU. For SLAM-only use we just want
     the main driver (produces /odin1/cloud_raw /imu/odometry/cloud_slam).
+
+    ⚠️ 不传 `config_file` ROS2 param: host_sdk_sample.cpp 不用它 (从 COLCON_PREFIX_PATH
+    环境变量找路径), 而且如果传了, launch 会用 --params-file 把同一个 yaml 再
+    load 一次, 文件句柄冲突 → "读取YAML文件失败: bad conversion" → SIGSEGV (实测).
     """
-    config_file = os.path.join(
-        get_package_share_directory('odin_ros_driver'),
-        'config', 'control_command.yaml')
     host_sdk = Node(
         package='odin_ros_driver',
         executable='host_sdk_sample',
-        name='host_sdk_sample',
+        # 不设 name=, 否则 launch 加 -r __node:=host_sdk_sample 触发 SIGSEGV
         output='screen',
-        parameters=[{'config_file': config_file}],
     )
     return [host_sdk]
 
@@ -143,9 +143,11 @@ def generate_launch_description():
         'launch', 'slam_to_mavros.launch.py')
 
     # ---- mavros (px4.launch) — always, 3s delay ---------------------------
+    # apt 的 ros-humble-mavros 只给了 ROS1 的 px4.launch (XML), ROS2 加载会
+    # "invalid syntax". 用我们自己的 px4.launch.py (在 scripts/ 目录).
     mavros_launch_file = os.path.join(
-        get_package_share_directory('mavros'),
-        'launch', 'px4.launch')
+        os.path.dirname(os.path.abspath(__file__)),
+        'px4.launch.py')
     mavros = TimerAction(
         period=3.0,
         actions=[IncludeLaunchDescription(

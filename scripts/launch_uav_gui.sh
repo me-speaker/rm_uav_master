@@ -73,7 +73,7 @@ echo "[2/3] 启全链路 launch ..."
 docker exec -d "$CONTAINER" bash -lc "
     source /opt/uav_ws/install/setup.bash
     export LIVOX_LIDAR_IP=$LIDAR_IP FCU_URL=$FCU_URL
-    ros2 launch /opt/uav_ws/uav_bringup.launch.py fcu_url:=\${FCU_URL} \
+    ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py fcu_url:=\${FCU_URL} \
         > /tmp/launch_uav_gui_chain.log 2>&1 &
     echo \$! > /tmp/launch_uav_chain.pid
 "

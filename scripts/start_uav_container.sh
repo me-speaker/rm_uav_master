@@ -36,8 +36,10 @@
 #   --novnc-port <port>      noVNC http 端口 (默认 6080)
 #   --vnc-port <port>        x11vnc 端口 (默认 5999)
 #   --src <dir>              源码目录 (默认 ${REPO_ROOT}/src)
+#   --scripts <dir>          scripts 目录 (默认 ${REPO_ROOT}/scripts, 改 launch 不用 rebuild)
+#   --workspace-dir <dir>    colcon 产物目录 install/build/log (默认 ${REPO_ROOT}/.colcon_ws)
 #   --config <dir>           config 目录 (默认 ${REPO_ROOT}/config, 可选)
-#   --image <name:tag>       镜像 (默认 uavsim:uav-v1.1)
+#   --image <name:tag>       镜像 (默认按 host 架构: uavsim:arm-v3.0 / uavsim:amd64-v3.0)
 #   --name <name>            容器名 (默认 rm-uavsim)
 #   --no-tty                 CI 模式
 #   --rm                     容器退出即删
@@ -49,9 +51,20 @@ set -eo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKERFILE="${REPO_ROOT}/Dockerfile.uav"
-IMAGE_NAME="${IMAGE_NAME:-uavsim:uav-v1.1}"
+if [[ -z "${IMAGE_NAME:-}" ]]; then
+    if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
+        IMAGE_NAME="uavsim:arm-v3.0"
+    else
+        IMAGE_NAME="uavsim:amd64-v3.0"
+    fi
+fi
 CONTAINER_NAME="${CONTAINER_NAME:-rm-uavsim}"
 SRC_DIR="${SRC_DIR:-${REPO_ROOT}/src}"
+# colcon workspace artifacts (install/build/log) 持久化到 host, 避免每次重启重新 build
+# 默认放 ${REPO_ROOT}/.colcon_ws, 不污染源码目录, .gitignore 覆盖
+WORKSPACE_DIR="${WORKSPACE_DIR:-${REPO_ROOT}/.colcon_ws}"
+# scripts/ 也挂进容器, 改 launch / entrypoint 不用 rebuild 镜像
+SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/scripts}"
 CONFIG_DIR="${CONFIG_DIR:-${REPO_ROOT}/config}"
 LIDAR="${LIDAR:-mid360}"
 LIVOX_LIDAR_IP="${LIVOX_LIDAR_IP:-192.168.1.1xx}"
@@ -92,6 +105,8 @@ while [[ $# -gt 0 ]]; do
         --novnc-port)   NOVNC_PORT="$2"; shift 2 ;;
         --vnc-port)     VNC_PORT="$2"; shift 2 ;;
         --src)          SRC_DIR="$2"; shift 2 ;;
+        --scripts)       SCRIPTS_DIR="$2"; shift 2 ;;
+        --workspace-dir)  WORKSPACE_DIR="$2"; shift 2 ;;
         --config)       CONFIG_DIR="$2"; shift 2 ;;
         --no-config)    MOUNT_CONFIG=""; shift ;;
         --image)        IMAGE_NAME="$2"; shift 2 ;;
@@ -137,11 +152,23 @@ do_build() {
     if [[ ! -f "$DOCKERFILE" ]]; then
         die "Dockerfile.uav not found: $DOCKERFILE (应在 ${REPO_ROOT} 根)"
     fi
-    info "build ${IMAGE_NAME} from ${DOCKERFILE} (context: ${REPO_ROOT})"
+
+    # 自动按 host 架构选 base, 避免 docker.io 不通时拉 multi-arch manifest 超时
+    # 允许 --base 显式覆盖, 也允许 BASE_IMAGE 环境变量
+    if [[ -n "${BASE_IMAGE:-}" ]]; then
+        BUILD_BASE="$BASE_IMAGE"
+    elif [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
+        # arm64 host: 用本地已 pull 的单架构 tag (免走 docker.io)
+        BUILD_BASE="ubuntu:22.04-linuxarm64"
+    else
+        BUILD_BASE="ubuntu:22.04"
+    fi
+    info "build ${IMAGE_NAME} from ${DOCKERFILE} (base=${BUILD_BASE}, context: ${REPO_ROOT})"
     docker build \
         -f "$DOCKERFILE" \
         -t "$IMAGE_NAME" \
         --build-arg "BUILDKIT_INLINE_CACHE=1" \
+        --build-arg "BASE_IMAGE=${BUILD_BASE}" \
         "$REPO_ROOT"
 }
 
@@ -171,6 +198,30 @@ do_start() {
     info "mount src:  $SRC_DIR  ->  /opt/uav_ws/src"
     local mount_args=( -v "${SRC_DIR}:/opt/uav_ws/src" )
 
+    # ---- scripts/ 挂载 (改 launch / entrypoint 不用 rebuild) ---------------
+    # uav_bringup.launch.py / px4.launch.py / uav_entrypoint.sh 等都在 host 上,
+    # 改了立即生效, 不用 docker build. Dockerfile 里 COPY 这些文件只是为了兜底
+    # (host 没挂的时候 container 也能跑). mount 会优先于 COPY.
+    if [[ -d "$SCRIPTS_DIR" ]]; then
+        info "mount scripts: $SCRIPTS_DIR  ->  /opt/uav_ws/scripts"
+        mount_args+=( -v "${SCRIPTS_DIR}:/opt/uav_ws/scripts" )
+        # entrypoint.sh 单独再挂到 /usr/local/bin/ (容器启动走 ENTRYPOINT 这路径)
+        if [[ -f "$SCRIPTS_DIR/uav_entrypoint.sh" ]]; then
+            mount_args+=( -v "${SCRIPTS_DIR}/uav_entrypoint.sh:/usr/local/bin/uav_entrypoint.sh" )
+        fi
+    fi
+
+    # ---- colcon artifacts (install/build/log) 持久化到 host ----------------
+    # 首次启动: host 目录是空 → entrypoint 跑 colcon build → 产物落 host
+    # 之后启动: install/setup.bash 存在 → entrypoint 跳过 build → 秒启
+    # 强制 clean rebuild: rm -rf .colcon_ws/{install,build,log}/. 然后重启
+    mkdir -p "$WORKSPACE_DIR/install" "$WORKSPACE_DIR/build" "$WORKSPACE_DIR/log"
+    info "mount ws:   $WORKSPACE_DIR/{install,build,log}  ->  /opt/uav_ws/{install,build,log}"
+    mount_args+=( -v "${WORKSPACE_DIR}/install:/opt/uav_ws/install" )
+    mount_args+=( -v "${WORKSPACE_DIR}/build:/opt/uav_ws/build" )
+    mount_args+=( -v "${WORKSPACE_DIR}/log:/opt/uav_ws/log" )
+    mount_args+=( -v "/etc/udev/rules.d/99-odin-usb.rules:/etc/udev/rules.d/99-odin-usb.rules")
+
     # config 目录 (外参 yaml 等) — 可选, 不存在就跳过
     if [[ -n "$MOUNT_CONFIG" && -d "$CONFIG_DIR" ]]; then
         info "mount cfg:  $CONFIG_DIR  ->  /opt/uav_ws/config"
@@ -197,7 +248,9 @@ do_start() {
         else
             # 自动检测: lsusb 找 vendor 2207 product 0019
             local odin_auto
-            odin_auto=$(lsusb 2>/dev/null | awk '/2207:0019/ {match($0, /Bus ([0-9]+) Device ([0-9]+)/, a); print a[1]"/"a[2]; exit}')
+            # mawk 不支持 match() 的数组捕获, 用 sed 提取 Bus/Device
+            odin_auto=$(lsusb 2>/dev/null | grep "2207:0019" | head -1 \
+                | sed -n 's/.*Bus \([0-9]\+\) Device \([0-9]\+\).*/\1\/\2/p')
             if [[ -n "$odin_auto" ]]; then
                 odin_usb_path="/dev/bus/usb/${odin_auto}"
             fi
@@ -206,7 +259,7 @@ do_start() {
             info "mount ODIN USB: $odin_usb_path"
             # 整个 USB bus 都给容器 (ODIN 是 USB 3.0 设备, 需整 bus)
             local bus_num="${odin_usb_path#/dev/bus/usb/}"; bus_num="${bus_num%%/*}"
-            device_args+=(--device="/dev/bus/usb/${bus_num#0}" -v /dev/bus/usb:/dev/bus/usb)
+            device_args+=(--device="/dev/bus/usb/${bus_num}" -v /dev/bus/usb:/dev/bus/usb)
         else
             info "[warn] --lidar odin 但找不到 ODIN USB (期望 vendor 2207:0019)"
             info "       lsusb 看一眼, 或 --odin-usb <bus>/<dev> 显式指定"
@@ -226,11 +279,11 @@ do_start() {
         docker_cmd="bash -lc 'set -e; \
             nohup start_uav_gui.sh > /tmp/uav_gui.log 2>&1 & \
             sleep 2; \
-            ros2 launch /opt/uav_ws/uav_bringup.launch.py \
+            ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py \
                 lidar:=${LIDAR} fcu_url:=${FCU_URL}; \
             wait'"
     elif [[ -n "$BRINGUP_FLAG" ]]; then
-        docker_cmd="ros2 launch /opt/uav_ws/uav_bringup.launch.py \
+        docker_cmd="ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py \
             lidar:=${LIDAR} fcu_url:=${FCU_URL}"
     else
         docker_cmd="bash"

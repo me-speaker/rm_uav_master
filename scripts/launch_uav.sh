@@ -52,7 +52,7 @@ docker exec -d "$CONTAINER" bash -lc "
     source /opt/uav_ws/install/setup.bash
     export LIVOX_LIDAR_IP=$LIDAR_IP
     export FCU_URL=$FCU_URL
-    ros2 launch /opt/uav_ws/uav_bringup.launch.py \
+    ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py \
         fcu_url:=\${FCU_URL} \
         > /tmp/launch_uav.log 2>&1 &
     echo \$! > /tmp/launch_uav.pid

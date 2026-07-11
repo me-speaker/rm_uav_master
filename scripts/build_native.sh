@@ -43,8 +43,11 @@ while [[ $# -gt 0 ]]; do
         --base)        BASE_IMAGE="$2"; shift 2 ;;
         --mirror)      ROS_MIRROR="$2"; shift 2 ;;
         --no-cache)    USE_CACHE="--no-cache"; shift ;;
+        --network)     NETWORK_ARG="--network=$2"; shift 2 ;;
         -h|--help)
-            sed -n '2,18p' "$0"; exit 0 ;;
+            sed -n '2,18p' "$0"
+            echo "  --network host|none|<name>   build 容器网络 (Tegra kernel 没 iptable_raw 时用 host)"
+            exit 0 ;;
         *) echo "[error] unknown: $1" >&2; exit 2 ;;
     esac
 done
@@ -64,11 +67,13 @@ else
     echo "[build_native] base 是 multi-arch tag, 加 $PLATFORM_ARG"
 fi
 
+NETWORK_ARG="${NETWORK_ARG:-}"
 docker build \
     -f "$REPO_ROOT/Dockerfile.uav" \
     -t "$IMAGE_NAME" \
     $USE_CACHE \
     $PLATFORM_ARG \
+    $NETWORK_ARG \
     --build-arg BASE_IMAGE="$BASE_IMAGE" \
     --build-arg ROS_APT_MIRROR="$ROS_MIRROR" \
     "$REPO_ROOT"

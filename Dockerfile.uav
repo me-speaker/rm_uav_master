@@ -46,6 +46,11 @@ ARG WITH_GUI=yes
 
 FROM ${BASE_IMAGE} AS uav
 
+# BuildKit: 必须重新声明才能在 FROM 之后的 RUN/ENV 里引用
+ARG ROS_DISTRO
+ARG WITH_GUI
+ARG ROS_APT_MIRROR
+
 LABEL maintainer="rm_ws Project <speaker@example.com>" \
       version="3.0" \
       description="Onboard drone image (from-scratch): bare Ubuntu + ROS2 + MAVROS + Livox SDK + SLAM deps. Multi-arch (amd64/arm64). Source mounted at runtime."
@@ -99,6 +104,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         python3-argcomplete \
         python3-rosinstall-generator \
         python3-numpy \
+        python3-pip \
     && rm -rf /var/lib/apt/lists/* \
     && rosdep init 2>/dev/null || true \
     && (echo "yaml https://mirrors.tuna.tsinghua.edu.cn/rosdistro/ros2/rosdep.yaml" > /etc/ros/rosdep/sources.list.d/99-tsinghua.list 2>/dev/null || true) \
@@ -115,10 +121,13 @@ ENV PYTHONPATH=/opt/ros/${ROS_DISTRO}/lib/python3.10/site-packages:${PYTHONPATH}
 # =============================================================================
 # mavros 跟 ROS Desktop 是分开装的包, 这里装 (~150MB)
 # GeographicLib 数据集: PX4 EKF2 用 vision_pose 融合时算 geoid 必须
+# pymavlink + pyserial: set_px4_mavlink.py 用 (mavros param service 在 humble broken)
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-mavros \
         ros-${ROS_DISTRO}-mavros-extras \
         geographiclib-tools \
+        python3-pip \
+    && pip3 install --break-system-packages pymavlink pyserial \
     && /opt/ros/${ROS_DISTRO}/lib/mavros/install_geographiclib_datasets.sh \
     && rm -rf /var/lib/apt/lists/*
 
@@ -190,6 +199,7 @@ RUN mkdir -p ${UAV_WS}/src ${UAV_WS}/log && \
 # 6. 启动脚本 (baked-in)
 # =============================================================================
 COPY scripts/uav_bringup.launch.py /opt/uav_ws/uav_bringup.launch.py
+COPY scripts/px4.launch.py         /opt/uav_ws/px4.launch.py
 COPY scripts/start_uav_gui.sh      /usr/local/bin/start_uav_gui.sh
 COPY scripts/uav_entrypoint.sh    /usr/local/bin/uav_entrypoint.sh
 RUN chmod +x /usr/local/bin/start_uav_gui.sh /usr/local/bin/uav_entrypoint.sh
@@ -236,6 +246,20 @@ RUN { \
 
 ENV IMAGE_VERSION=3.0
 ENV WITH_GUI=${WITH_GUI}
+
+# =============================================================================
+# 让 docker exec bash 自动 source ROS (避免每次手动 source)
+# =============================================================================
+RUN { \
+        echo '#!/bin/bash'; \
+        echo '# Auto-source ROS + colcon workspace on any interactive shell'; \
+        echo 'source /opt/ros/${ROS_DISTRO}/setup.bash 2>/dev/null && \'; \
+        echo '    [ -f $UAV_WS/install/setup.bash ] && source $UAV_WS/install/setup.bash 2>/dev/null'; \
+        echo '[ "\$BASH_VERSINFO" ] && [ -n "\$PS1" ] && echo "[uav_ws] ROS sourced (\$ROS_DISTRO, $UAV_WS)"'; \
+    } > /etc/profile.d/uav_ws.sh && chmod +x /etc/profile.d/uav_ws.sh
+
+# 也加到 .bashrc 兜底 (login + non-login 都覆盖)
+RUN echo '[ -f /etc/profile.d/uav_ws.sh ] && . /etc/profile.d/uav_ws.sh' >> /root/.bashrc
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
     CMD bash -c 'source /opt/ros/${ROS_DISTRO}/setup.bash && \

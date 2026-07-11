@@ -64,7 +64,7 @@ echo ""
 docker exec -d "$CONTAINER" bash -lc "
     source /opt/uav_ws/install/setup.bash
     export FCU_URL=$FCU_URL
-    ros2 launch /opt/uav_ws/uav_bringup.launch.py \
+    ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py \
         lidar:=fake \
         fcu_url:=\${FCU_URL} \
         fake_motion_mode:=$MOTION_MODE \

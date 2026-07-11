@@ -59,7 +59,7 @@ echo "[gui] ready"
 echo "  VNC     : localhost:${VNC_PORT}   (or <host-ip>:${VNC_PORT} via docker -p)"
 echo "  noVNC   : http://localhost:${NOVNC_PORT}/vnc.html  (or http://<host-ip>:${NOVNC_PORT}/vnc.html)"
 echo ""
-echo "  在容器内另开终端跑:  ros2 launch /opt/uav_ws/uav_bringup.launch.py with_rviz:=true"
+echo "  在容器内另开终端跑:  ros2 launch /opt/uav_ws/scripts/uav_bringup.launch.py with_rviz:=true"
 echo ""
 
 cleanup() {
