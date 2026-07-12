@@ -31,11 +31,13 @@ YEL='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# 取一次 topic 内容的 helper
+# 取一次 topic 内容的 helper (不用 --field, 因为不同 msg 类型字段路径不一样)
+# Odometry 是 pose.pose.position, PoseStamped 是 pose.position, PoseWithCovariance 是 pose.pose.position
+# 直接 echo 全部, 然后 awk 抓 x:/y:/z: (取第一次出现 = position)
 get_pose() {
     local topic="$1"
     docker exec "$CONTAINER" bash -c "$source_bash && \
-        timeout 2 ros2 topic echo $topic --field pose.position --once 2>/dev/null"
+        timeout 3 ros2 topic echo $topic --once 2>/dev/null"
 }
 
 # 提取 x, y, z 数值
@@ -49,11 +51,29 @@ extract_pos() {
     printf "  %-30s x=%8.3f  y=%8.3f  z=%8.3f\n" "$label" "${x:-0}" "${y:-0}" "${z:-0}"
 }
 
-# 取频率
+# 取频率 (timeout 必须 4s+, ros2 topic hz 至少 1 帧才能出 average rate)
 get_hz() {
     local topic="$1"
     docker exec "$CONTAINER" bash -c "$source_bash && \
-        timeout 2 ros2 topic hz $topic 2>/dev/null | grep average | head -1 | awk '{print \$3}'"
+        timeout 5 ros2 topic hz $topic 2>/dev/null | grep average | head -1 | awk '{print \$3}'"
+}
+
+# 一次拿多个频率 (节省 docker exec 开销, 5s timeout 一次)
+get_hz_batch() {
+    docker exec "$CONTAINER" bash -c "$source_bash && {
+        timeout 5 ros2 topic hz /odin1/odometry 2>/dev/null | grep average | head -1 | awk '{print \"odin=\"\$3}'
+        timeout 5 ros2 topic hz /mavros/vision_pose/pose 2>/dev/null | grep average | head -1 | awk '{print \"vision=\"\$3}'
+    }"
+}
+
+# 一次拿多个 topic 的最新 pose (echo --once 5s timeout 拿到一条)
+get_pose_batch() {
+    docker exec "$CONTAINER" bash -c "$source_bash && {
+        echo '===ODIN==='
+        timeout 4 ros2 topic echo /odin1/odometry --once 2>/dev/null
+        echo '===PX4==='
+        timeout 4 ros2 topic echo /mavros/local_position/pose --once 2>/dev/null
+    }"
 }
 
 echo "═══════════════════════════════════════════════════════════════"
@@ -74,21 +94,21 @@ PREV_PX4_Y=""
 
 # 跑 N 轮
 for i in $(seq 1 60); do
-    # 频率
-    odin_hz=$(get_hz "/odin1/odometry")
-    px4_hz=$(get_hz "/mavros/local_position/pose")
-    vision_hz=$(get_hz "/mavros/vision_pose/pose")
+    # 频率 (5s timeout 一次)
+    hz_out=$(get_hz_batch)
+    odin_hz=$(echo "$hz_out" | grep -oE "odin=[0-9.]+" | cut -d= -f2)
+    vision_hz=$(echo "$hz_out" | grep -oE "vision=[0-9.]+" | cut -d= -f2)
 
     echo "═══════════════════════════════════════════════════════════════"
     echo -e "  ${CYAN}[T+${i}s] 频率:${NC}"
     echo "  /odin1/odometry:            ${odin_hz:-N/A} Hz"
     echo "  /mavros/vision_pose/pose:   ${vision_hz:-N/A} Hz"
-    echo "  /mavros/local_position/pose: ${px4_hz:-N/A} Hz"
     echo ""
 
-    # 位置
-    odin_raw=$(get_pose "/odin1/odometry")
-    px4_raw=$(get_pose "/mavros/local_position/pose")
+    # 位置 (一次拿两个)
+    pose_out=$(get_pose_batch)
+    odin_raw=$(echo "$pose_out" | sed -n '/===ODIN===/,/===PX4===/p' | sed '/===PX4===/d')
+    px4_raw=$(echo  "$pose_out" | sed -n '/===PX4===/,$p' | sed '/===PX4===/d')
 
     extract_pos "/odin1/odometry"          "$odin_raw"
     extract_pos "/mavros/local_position/pose" "$px4_raw"

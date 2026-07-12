@@ -42,6 +42,8 @@ def generate_launch_description():
             # type conflict 崩溃. mavros humble 已知 bug, workaround 就是裸起.
             namespace='/mavros',
             output='screen',
+            respawn=True,                    # PX4 reboot → mavros crash → 自动拉起
+            respawn_delay=5.0,                # 给 PX4 5 秒重启时间再连
             parameters=[{
                 'fcu_url': LaunchConfiguration('fcu_url'),
                 'gcs_url': LaunchConfiguration('gcs_url'),

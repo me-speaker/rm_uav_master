@@ -101,7 +101,6 @@ class SlamToMavros(Node):
         # ---- parameters -----------------------------------------------------
         self.declare_parameter('odom_topic', '/Odometry')
         self.declare_parameter('vision_pose_topic', '/mavros/vision_pose/pose')
-        self.declare_parameter('vision_pose_cov_topic', '/mavros/vision_pose/pose_cov')
         self.declare_parameter('vision_speed_topic', '/mavros/vision_speed/speed_twist')
         self.declare_parameter('world_frame_id', 'map')
         self.declare_parameter('odom_frame_id', 'odom')
@@ -109,9 +108,6 @@ class SlamToMavros(Node):
         self.declare_parameter('lidar_frame_id', 'livox_frame')
         self.declare_parameter('lidar_to_base_xyz', [0.0, 0.0, 0.0])
         self.declare_parameter('lidar_to_base_rpy', [0.0, 0.0, 0.0])
-        # publish_covariance: true → 发 PoseWithCovarianceStamped 到 pose_cov;
-        #                     false → 发 PoseStamped 到 pose (默认, vision_to_mavros 范式)
-        self.declare_parameter('publish_covariance', False)
         # gamma_world: z-axis rotation aligning SLAM odom frame with ROS ENU
         # Convention matches vision_to_mavros: R_z(-γ) for position AND quaternion,
         # so the same `gamma_world` value produces the same physical effect.
@@ -120,19 +116,11 @@ class SlamToMavros(Node):
         self.declare_parameter('publish_tf', True)
         self.declare_parameter('publish_speed', True)
         self.declare_parameter('publish_vision_pose', True)
-        # force_ros_stamp: 用 ROS 当前时间覆盖 SLAM 输入的 header.stamp.
-        # **ODIN SLAM 必开**: ODIN driver 默认用设备开机时间 (use_host_ros_time=0),
-        # mavros 转发到 PX4 VISION_POSITION_ESTIMATE.usec 后,PX4 EKF2 看到
-        # 几百秒的 usec,跟 PX4 内部时间基准不符,触发 EVP_GATE 拒收整个 vision pose.
-        # 设 true → 用 ROS 系统时间覆盖,PX4 fusion 正常.
-        self.declare_parameter('force_ros_stamp', False)
-        self.force_ros_stamp = bool(self.get_parameter('force_ros_stamp').value)
         self.declare_parameter('target_rate_hz', 50.0)
         self.declare_parameter('frame_timeout_sec', 1.0)
 
         self.odom_topic          = self.get_parameter('odom_topic').value
         self.vision_pose_topic   = self.get_parameter('vision_pose_topic').value
-        self.vision_pose_cov_topic = self.get_parameter('vision_pose_cov_topic').value
         self.vision_speed_topic  = self.get_parameter('vision_speed_topic').value
         self.world_frame_id      = self.get_parameter('world_frame_id').value
         self.odom_frame_id       = self.get_parameter('odom_frame_id').value
@@ -144,7 +132,6 @@ class SlamToMavros(Node):
         self.publish_tf          = bool(self.get_parameter('publish_tf').value)
         self.publish_speed       = bool(self.get_parameter('publish_speed').value)
         self.publish_vision_pose = bool(self.get_parameter('publish_vision_pose').value)
-        self.publish_covariance  = bool(self.get_parameter('publish_covariance').value)
         self.target_rate_hz      = float(self.get_parameter('target_rate_hz').value)
         self.frame_timeout_sec   = float(self.get_parameter('frame_timeout_sec').value)
 
@@ -162,41 +149,27 @@ class SlamToMavros(Node):
         self.q_gw = quaternion_from_euler(0.0, 0.0, -self.gamma_world)
 
         # ---- publishers -----------------------------------------------------
-        # mavros vision_pose plugin 订阅 /mavros/vision_pose/pose 类型 = PoseStamped
-        # (默认, 不带 cov) — 这跟 vision_to_mavros.cpp 一致。
-        # mavros 内部用默认 covariance 转发到 VISION_POSITION_ESTIMATE。
-        # 如果要带 cov, 用 /mavros/vision_pose/pose_cov (PoseWithCovarianceStamped),
-        # 由 publish_covariance=true 切换。
+        # mavros vision_pose/vision_speed 订阅端要 RELIABLE, 之前用 BEST_EFFORT
+        # 导致 WARN "No messages will be sent to it"。改为 RELIABLE。
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
+        # MAVROS vision-pose / vision-speed 期望 RELIABLE QoS (mavros 内部订阅端
+        # 是 RELIABLE 的; uXRCE-DDS bridge 自己降级到 BEST_EFFORT 走 FastDDS)。
         mavros_qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
-        # covariance override (用户可调, 仅在 publish_covariance=true 时用)
+        self.pub_pose = self.create_publisher(
+            PoseWithCovarianceStamped, self.vision_pose_topic, mavros_qos)
+        # covariance override (用户可调, 太大 EKF2 不信, 太小 EKF2 overshoot)
         self.declare_parameter('vision_pose_cov_pos', 0.05)  # 5cm
         self.declare_parameter('vision_pose_cov_rot', 0.5)   # 30°
         self.cov_pos = float(self.get_parameter('vision_pose_cov_pos').value)
         self.cov_rot = float(self.get_parameter('vision_pose_cov_rot').value)
-
-        if self.publish_covariance:
-            # /mavros/vision_pose/pose_cov (PoseWithCovarianceStamped) — mavros plugin
-            # 也会订阅这个 topic (从 px4_config.yaml 默认开启)
-            self.pub_pose = self.create_publisher(
-                PoseWithCovarianceStamped,
-                self.vision_pose_cov_topic,
-                mavros_qos,
-            )
-        else:
-            # /mavros/vision_pose/pose (PoseStamped) — mavros 默认订阅,
-            # 内部用默认 covariance
-            self.pub_pose = self.create_publisher(
-                PoseStamped, self.vision_pose_topic, mavros_qos)
-
         self.pub_twist = self.create_publisher(
             TwistStamped, self.vision_speed_topic, mavros_qos)
         self.tf_br = TransformBroadcaster(self)
@@ -292,47 +265,28 @@ class SlamToMavros(Node):
 
         # Publish vision pose
         if self.publish_vision_pose:
-            if self.publish_covariance:
-                # PoseWithCovarianceStamped → /mavros/vision_pose/pose_cov
-                ps = PoseWithCovarianceStamped()
-                ps.header = msg.header
-                if self.force_ros_stamp:
-                    ps.header.stamp = self.get_clock().now().to_msg()
-                ps.header.frame_id = self.world_frame_id
-                ps.pose.pose.position.x = t_wb[0]
-                ps.pose.pose.position.y = t_wb[1]
-                ps.pose.pose.position.z = t_wb[2]
-                ps.pose.pose.orientation.x = q_wb[0]
-                ps.pose.pose.orientation.y = q_wb[1]
-                ps.pose.pose.orientation.z = q_wb[2]
-                ps.pose.pose.orientation.w = q_wb[3]
-                # 6x6 covariance row-major: x y z roll pitch yaw 方差
-                # 注意: 全部用 float (0.0) 不能混 int, ROS2 strict type check
-                var_pos = float(self.cov_pos) ** 2
-                var_rot = float(self.cov_rot) ** 2
-                ps.pose.covariance = [
-                    var_pos, 0.0, 0.0, 0.0, 0.0, 0.0,
-                    0.0, var_pos, 0.0, 0.0, 0.0, 0.0,
-                    0.0, 0.0, var_pos, 0.0, 0.0, 0.0,
-                    0.0, 0.0, 0.0, var_rot, 0.0, 0.0,
-                    0.0, 0.0, 0.0, 0.0, var_rot, 0.0,
-                    0.0, 0.0, 0.0, 0.0, 0.0, var_rot,
-                ]
-            else:
-                # PoseStamped → /mavros/vision_pose/pose (默认, vision_to_mavros 范式)
-                # mavros 用内部默认 covariance
-                ps = PoseStamped()
-                ps.header = msg.header
-                if self.force_ros_stamp:
-                    ps.header.stamp = self.get_clock().now().to_msg()
-                ps.header.frame_id = self.world_frame_id
-                ps.pose.position.x = t_wb[0]
-                ps.pose.position.y = t_wb[1]
-                ps.pose.position.z = t_wb[2]
-                ps.pose.orientation.x = q_wb[0]
-                ps.pose.orientation.y = q_wb[1]
-                ps.pose.orientation.z = q_wb[2]
-                ps.pose.orientation.w = q_wb[3]
+            ps = PoseWithCovarianceStamped()
+            ps.header = msg.header
+            ps.header.frame_id = self.world_frame_id
+            ps.pose.pose.position.x = t_wb[0]
+            ps.pose.pose.position.y = t_wb[1]
+            ps.pose.pose.position.z = t_wb[2]
+            ps.pose.pose.orientation.x = q_wb[0]
+            ps.pose.pose.orientation.y = q_wb[1]
+            ps.pose.pose.orientation.z = q_wb[2]
+            ps.pose.pose.orientation.w = q_wb[3]
+            # 6x6 covariance row-major: x y z roll pitch yaw 方差
+            # 注意: 全部用 float (0.0) 不能混 int, ROS2 strict type check
+            var_pos = float(self.cov_pos) ** 2
+            var_rot = float(self.cov_rot) ** 2
+            ps.pose.covariance = [
+                var_pos, 0.0, 0.0, 0.0, 0.0, 0.0,
+                0.0, var_pos, 0.0, 0.0, 0.0, 0.0,
+                0.0, 0.0, var_pos, 0.0, 0.0, 0.0,
+                0.0, 0.0, 0.0, var_rot, 0.0, 0.0,
+                0.0, 0.0, 0.0, 0.0, var_rot, 0.0,
+                0.0, 0.0, 0.0, 0.0, 0.0, var_rot,
+            ]
             self.pub_pose.publish(ps)
 
         # Publish twist (linear only — FAST-LIO publishes angular velocity
@@ -398,9 +352,7 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     except Exception as e:                       # noqa: BLE001
-        import traceback
-        node.get_logger().error(f"unhandled EXC: {type(e).__name__}: {e!r}", throttle_duration_sec=5.0)
-        traceback.print_exc()
+        node.get_logger().error(f'unhandled: {e}', throttle_duration_sec=5.0)
     finally:
         try:
             node.destroy_node()

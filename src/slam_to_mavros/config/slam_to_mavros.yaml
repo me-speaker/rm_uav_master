@@ -15,8 +15,11 @@
     # T_lidar_to_base_link. The LiDAR sits 5cm above the FCU and is rotated
     # 180deg about Z so its "forward" is opposite to drone's "forward" (common
     # Mid-360 mounting). Adjust per airframe.
-    lidar_to_base_xyz: [0.0, 0.0, -0.05]   # m, in base_link frame
-    lidar_to_base_rpy: [0.0, 0.0, 3.14159] # rad (roll, pitch, yaw)
+    #   FAST-LIO (Mid-360): 用 [0, 0, -0.05] xyz + 180° yaw
+    #   ODIN: host_sdk_sample 已经做了 lidar→base, /odin1/odometry 已是 base_link in odom.
+    #     **必须**用 [0,0,0], 否则方向转两次反而错.
+    lidar_to_base_xyz: [0.0, 0.0, 0.0]
+    lidar_to_base_rpy: [0.0, 0.0, 0.0]
 
     # ---- behaviour toggles -------------------------------------------------
     publish_tf:           true
@@ -26,3 +29,11 @@
     # ---- rate / watchdog ---------------------------------------------------
     target_rate_hz:     50.0
     frame_timeout_sec:   1.0
+
+    # ---- gamma_world: rotate SLAM odom frame to align with PX4 ENU -----
+    # vision_to_mavros 的关键参数. SLAM 启动时的 odom frame 朝向不一定是真东/北
+    # 用这个 z 轴旋转把 SLAM 的 x/y 对齐到 ROS ENU (x=East, y=North)
+    # 默认 0 = SLAM frame 跟 ENU 一致
+    # 常见 VIO: -1.5707963 (-π/2) = camera Y-forward → ROS X-forward
+    # ODIN SLAM 通常 frame 跟 ENU 一致, 用 0
+    gamma_world: 0.0

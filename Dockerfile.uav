@@ -58,6 +58,9 @@ LABEL maintainer="rm_ws Project <speaker@example.com>" \
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=${ROS_DISTRO}
 ENV UAV_WS=/opt/uav_ws
+# BASH_ENV 让非交互 bash (docker exec ... bash -c "ros2 ...") 自动 source ROS
+# 配合 /etc/profile.d/uav_ws.sh 让 login + 非 login 都能找到 ros2
+ENV BASH_ENV=/etc/profile.d/uav_ws.sh
 ENV LIVOX_SDK_PATH=/opt/Livox-SDK2
 
 # Locale (ROS 必需)

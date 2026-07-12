@@ -66,20 +66,48 @@ PARAMS_VISION = [
 
     # ----- EKF2 vision fusion control -----
     # EKF2_EV_CTRL bit 定义:
-    #   bit0 (1) = horizontal position fusion
-    #   bit1 (2) = vertical (height) fusion
-    #   bit2 (4) = velocity fusion   ← 9 关掉这个, vision 速度噪声大, 让 IMU 算
-    #   bit3 (8) = yaw fusion
-    # 9 = horiz pos + yaw (推荐: 不太激进, 室内稳)
-    ('EKF2_EV_CTRL',  9, 6, 'vision: horiz pos + yaw (NO velocity, NO vert)'),
-    ('EKF2_AID_MASK', 9, 6, 'backup: bit0 vision_pos + bit3 vision_yaw'),
-    ('EKF2_HGT_REF',  1, 6, 'Barometer (默认 1; vision 高位噪声大, 用 baro 更稳)'),
+    #   bit0 (1) = horizontal position fusion   ✓ ON
+    #   bit1 (2) = vertical (height) fusion     ✓ ON
+    #   bit2 (4) = velocity fusion             ✗ OFF (vision vel 噪声大)
+    #   bit3 (8) = yaw fusion                  ✓ ON
+    # 11 = horiz pos + vert pos + yaw (全用 vision 除速度外)
+    ('EKF2_EV_CTRL',  11, 6, 'vision: horiz + vert + yaw, NO velocity'),
+    # AID_MASK: bit3 vision pos + bit4 vision yaw (文章推荐; 跟 EV_CTRL 不完全一致)
+    ('EKF2_AID_MASK', 24, 6, 'bit3 vision pos + bit4 vision yaw (CSDN 经验)'),
+    # 有些 PX4 版本用 EKF2_EV_AID_MASK 而不是 AID_MASK, 也设上
+    ('EKF2_EV_AID_MASK', 24, 6, '新 PX4 字段 (兼容)'),
+    # 高程用 vision (用户决定: 把 vert 也纳入 vision)
+    ('EKF2_HGT_REF',  3, 6, 'Vision as height reference (NOT baro)'),
 
-    # ----- EKF2 vision noise / delay -----
+    # ----- EKF2 vision noise / gate (文章经验值) -----
     # EV_DELAY 单位秒, 10ms ≈ 0.01s (docker 容器内多几 ms 延迟, 给点余量)
     ('EKF2_EV_DELAY',  0.01, 9, 'vision 数据相对 IMU 的延迟 (10ms, 含 docker 链路)'),
-    # EVP_NOISE 单位米, vision 位置噪声标准差 (ODIN 自带 SLAM ~3cm 量级)
-    ('EKF2_EVP_NOISE', 0.03, 9, 'vision position 噪声 std (3cm)'),
+    # NOISE_MD = 0 表示用消息里的 covariance, 不强制最低值
+    ('EKF2_EV_NOISE_MD', 0, 6, '0=用消息 covariance (推荐)'),
+    # 噪声下限 (如果消息 covariance 更小, 用这些作为下限)
+    ('EKF2_EVP_NOISE', 0.1, 9, 'vision position 噪声下限 10cm std'),
+    ('EKF2_EVV_NOISE', 0.1, 9, 'vision velocity 噪声下限'),
+    ('EKF2_EVA_NOISE', 0.1, 9, 'vision attitude 噪声下限'),
+    # 门限 (新息大过这些 σ 算 outlier 拒绝)
+    ('EKF2_EVP_GATE',  3.0, 9, '位置新息门限 (3σ)'),
+    ('EKF2_EVA_GATE',  3.0, 9, '姿态新息门限 (3σ)'),
+    # quality 检查门槛 = 0 (不检查; quality=-1 也行)
+    ('EKF2_EV_QMIN',   0, 6, '不检查 quality'),
+    # BARO 关掉避免气压干扰 vision 高度
+    ('EKF2_BARO_CTRL', 0, 6, 'disable baro (只用 vision 高度)'),
+
+    # ----- micro-xrce-dds (PX4 ↔ ROS2 direct, 绕过 mavros) -----
+    # UXRCE_DDS_CFG=3 = USB 端口 (PX4 USB-C → 容器 /dev/ttyACM0)
+    ('UXRCE_DDS_CFG',  3, 2, 'enable micro-xrce-dds on USB (替代 mavros)'),
+    # MAV_0_CONFIG=0 释放 TELEM1 给 XRCE-DDS (PX4 内部 TELEM1/USB-C 共享)
+    ('MAV_0_CONFIG',   0, 6, 'disable MAVLink on TELEM1 (XRCE 独占)'),
+    ('MAV_1_CONFIG',   0, 6, 'disable MAVLink on TELEM2 (避免干扰)'),
+    # SER_TEL1_BAUD 必须匹配 agent baudrate
+    ('SER_TEL1_BAUD',  921600, 6, 'TELEM1 baudrate (匹配 agent)'),
+    # UXRCE_DDS_KEY=0 默认; key > 0 时多个 client 用不同 key
+    ('UXRCE_DDS_KEY',  0, 6, 'session key (默认 0)'),
+    # 时间同步 (默认开)
+    ('UXRCE_DDS_SYNCT', 1, 6, '时间同步 (默认开)'),
 
     # ----- 验证用 -----
     ('MAV_ODOM_LP',    1, 2, 'PX4 回传 ODOMETRY, --verify 用来验证 fusion 在跑'),
