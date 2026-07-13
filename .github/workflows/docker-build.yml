@@ -1,0 +1,83 @@
+name: docker-build
+
+on:
+  push:
+    branches: [master, main]
+    # paths 过滤: 改代码才 build, 改 docs 不 build
+    paths:
+      - 'Dockerfile.uav'
+      - 'src/**'
+      - 'scripts/**'
+      - '.github/workflows/docker-build.yml'
+    # tags 触发: 打 tag 自动 build + push (按 tag name 作 image tag)
+    tags:
+      - 'v*'
+  # 手动 trigger (Actions 页 "Run workflow")
+  workflow_dispatch:
+    inputs:
+      tag_prefix:
+        description: 'Image tag prefix (e.g. arm-v1.0 -> rm-uav-dep:arm-v1.0-<sha>)'
+        default: 'arm-v1.0'
+
+env:
+  IMAGE_NAME: rm-uav-dep
+
+jobs:
+  build:
+    # 多架构 build (arm64 + amd64), 模拟 dev 机 + 未来 amd64 dev 机
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (cross-arch build)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (image tags)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # 短 SHA 标签 (每次 push 自动更新)
+            type=sha,format=short
+            # master 分支: arm-v1.0-stable
+            type=raw,value={{branch}}-stable,enable={{is_default_branch}}
+            # 手动 dispatch: 用输入的 prefix
+            type=raw,value=${{ inputs.tag_prefix }}-manual,enable=${{ github.event_name == 'workflow_dispatch' }}
+            # 打 tag (v1.0.0): major.minor + latest
+            type=semver,pattern={{version}}
+            type=raw,value=latest,enable={{is_default_event}}
+
+      # 缓存 layer (GitHub 自带 cache backend, 不用额外配置)
+      - name: Build and push (multi-arch)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile.uav
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+            ROS_APT_MIRROR=tsinghua
+
+      - name: Image digest
+        if: steps.meta.outputs.digest
+        run: |
+          echo "Image pushed: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}@${{ steps.meta.outputs.digest }}"

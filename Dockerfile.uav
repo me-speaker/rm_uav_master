@@ -42,7 +42,7 @@
 ARG BASE_IMAGE=ubuntu:22.04
 ARG ROS_DISTRO=humble
 ARG ROS_APT_MIRROR=tsinghua   # tsinghua | huawei | official
-ARG WITH_GUI=yes
+ARG WITH_GUI=no   # 默认 no (机载电脑无 GUI), dev 时 --build-arg WITH_GUI=yes 打开
 
 FROM ${BASE_IMAGE} AS uav
 
@@ -96,19 +96,22 @@ RUN if [ "${ROS_APT_MIRROR}" = "tsinghua" ]; then \
             > /etc/apt/sources.list.d/ros2.list; \
     fi
 
-# 装 ROS Desktop (含 rviz2, rqt, colcon, rosdep, ...)
-# 包含基础 ROS + navigation2 + perception 等 (完整 desktop)
-# 约 1.5GB 装包
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        ros-${ROS_DISTRO}-desktop \
-        python3-colcon-common-extensions \
+# 装 ROS 基础 (~150MB) + Python 基础工具 (无 colcon 编译链)
+# 部署模型: 开发机 colcon build → install/ 跟项目走 → 机载电脑只跑
+# 所以机载电脑不需要 build-essential, cmake, colcon-ros, ros-ament-* 等编译工具
+# BuildKit cache mount: 缓存 /var/lib/apt 加速重 build
+RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        # ROS 核心 (无 rviz2 / nav2 / perception)
+        ros-${ROS_DISTRO}-ros-base \
+        # Python ROS 基础 (rosdep / vcstool / numpy 等)
         python3-rosdep \
         python3-vcstool \
         python3-argcomplete \
         python3-rosinstall-generator \
         python3-numpy \
         python3-pip \
-    && rm -rf /var/lib/apt/lists/* \
     && rosdep init 2>/dev/null || true \
     && (echo "yaml https://mirrors.tuna.tsinghua.edu.cn/rosdistro/ros2/rosdep.yaml" > /etc/ros/rosdep/sources.list.d/99-tsinghua.list 2>/dev/null || true) \
     && rosdep update 2>&1 | tail -3 || true
@@ -125,7 +128,10 @@ ENV PYTHONPATH=/opt/ros/${ROS_DISTRO}/lib/python3.10/site-packages
 # mavros 跟 ROS Desktop 是分开装的包, 这里装 (~150MB)
 # GeographicLib 数据集: PX4 EKF2 用 vision_pose 融合时算 geoid 必须
 # pymavlink + pyserial: set_px4_mavlink.py 用 (mavros param service 在 humble broken)
-RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-mavros \
         ros-${ROS_DISTRO}-mavros-extras \
         geographiclib-tools \
@@ -137,35 +143,36 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
-# 3. SLAM 编译依赖 + ODIN USB 雷达驱动依赖 + GUI
+# 3. Runtime 库 (SLAM / ODIN 需要) + 工具
 # =============================================================================
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        # 基础编译工具
-        git build-essential cmake pkg-config \
-        # SLAM 编译链 (FAST_LIO 需要)
-        libeigen3-dev libpcl-dev libpcl-ros-dev \
-        libyaml-cpp-dev libgoogle-glog-dev libgflags-dev \
-        # ODIN USB 雷达依赖
-        libusb-1.0-0-dev libssl-dev libopencv-dev \
-        # FAST_LIO SLAM ROS 依赖
+# 机载电脑不编译, 所以 *-dev 包全部不装
+# 只装 runtime shared libraries + ROS runtime packages
+# ODIN host_sdk_sample 链接 libopencv_*.so.4.5d (ubuntu 22.04 jammy 默认)
+RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+        # OpenCV 4.5d runtime (ODIN host_sdk_sample 链接的 .so 系列)
+        # libopencv-contrib4.5d 是 meta-package, 会拉一堆 contrib 模块
+        # (aruco / ccalib 等是 ODIN 链接的, 在 contrib 包里)
+        libopencv-contrib4.5d \
+        # 其他 runtime 库
+        libssl3 libusb-1.0-0 \
+        # ROS runtime packages (slam_to_mavros / odin_ros_driver 运行时依赖)
         ros-${ROS_DISTRO}-pcl-ros \
         ros-${ROS_DISTRO}-nav-msgs ros-${ROS_DISTRO}-geometry-msgs \
         ros-${ROS_DISTRO}-sensor-msgs ros-${ROS_DISTRO}-tf2-ros \
         ros-${ROS_DISTRO}-tf2-geometry-msgs ros-${ROS_DISTRO}-tf2-sensor-msgs \
         ros-${ROS_DISTRO}-diagnostic-updater \
-        # ODIN ROS 依赖
         ros-${ROS_DISTRO}-visualization-msgs \
         ros-${ROS_DISTRO}-message-filters \
         ros-${ROS_DISTRO}-image-transport \
         ros-${ROS_DISTRO}-cv-bridge \
-        ros-${ROS_DISTRO}-rosidl-default-generators \
-        ros-${ROS_DISTRO}-rosidl-default-runtime \
         # 工具
         psmisc wget usbutils udev iputils-ping net-tools bash-completion \
-        ca-certificates \
+        ca-certificates git \
     && rm -rf /var/lib/apt/lists/*
 
-# GUI 栈 (默认开, ARG WITH_GUI=no 关掉)
+# GUI 栈 (默认关, ARG WITH_GUI=yes 打开)
 # rviz2 已经在 ros-humble-desktop 里装了, 这里只需 X server + noVNC
 RUN if [ "${WITH_GUI}" = "yes" ]; then \
         apt-get update && apt-get install -y --no-install-recommends \
@@ -180,18 +187,11 @@ RUN if [ "${WITH_GUI}" = "yes" ]; then \
     fi
 
 # =============================================================================
-# 4. Livox-SDK2 v1.3.1 (源码编译到 /usr/local, 30s-2min)
+# 4. (跳过) Livox-SDK2 源码编译
 # =============================================================================
-# ARM64 上 git clone 也正常工作, 只是 cmake build 时间稍长 (从源码编译)
-RUN git clone --branch v1.3.1 --depth 1 --recurse-submodules \
-        https://gh-proxy.com/https://github.com/Livox-SDK/Livox-SDK2.git ${LIVOX_SDK_PATH} || \
-    git clone --branch v1.3.1 --depth 1 --recurse-submodules \
-        https://github.com/Livox-SDK/Livox-SDK2.git ${LIVOX_SDK_PATH} && \
-    cd ${LIVOX_SDK_PATH} && \
-    cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local && \
-    cmake --build build -j"$(nproc)" --target install && \
-    ldconfig && \
-    rm -rf ${LIVOX_SDK_PATH}/build
+# odin_ros_driver 包自带 prebuilt livox SDK (liblydHostApi_arm.a),
+# 所以镜像里不需要从源码编译 Livox-SDK2.
+# 省 ~50-100MB image size + 2-3 min build time.
 
 # =============================================================================
 # 5. 工作空间结构 (空 src/, 运行时挂 host 的 rm_ws/ 整个目录)
@@ -212,6 +212,17 @@ COPY scripts/launch_odin_px4.sh     /opt/uav_ws/scripts/launch_odin_px4.sh
 COPY scripts/rm_dep-watchdog.sh     /opt/uav_ws/scripts/rm_dep-watchdog.sh
 RUN chmod +x /usr/local/bin/start_uav_gui.sh /usr/local/bin/uav_entrypoint.sh \
          /opt/uav_ws/scripts/launch_odin_px4.sh /opt/uav_ws/scripts/rm_dep-watchdog.sh
+
+# =============================================================================
+# 5.5 GeographicLib 数据集 (mavros 必须, build 时下不了, 直接 COPY)
+# =============================================================================
+# mavros_node 启动时找 /usr/share/GeographicLib/{geoids,gravity,magnetic}/*
+# 缺失会 throw exception 整个 mavros 进程死掉.
+# build 时 install_geographiclib_datasets.sh 网络访问 GitHub 不通, 改从 dev 机 COPY.
+COPY dockerfiles/geographiclib-datasets/geoids/egm96-5.pgm      /usr/share/GeographicLib/geoids/egm96-5.pgm
+COPY dockerfiles/geographiclib-datasets/geoids/egm96-5.pgm.aux.xml /usr/share/GeographicLib/geoids/egm96-5.pgm.aux.xml
+COPY dockerfiles/geographiclib-datasets/gravity/egm96.egm.cof    /usr/share/GeographicLib/gravity/egm96.egm.cof
+COPY dockerfiles/geographiclib-datasets/magnetic/emm2015.wmm.cof  /usr/share/GeographicLib/magnetic/emm2015.wmm.cof
 
 # =============================================================================
 # 7. udev rules (Livox USB + ODIN USB)

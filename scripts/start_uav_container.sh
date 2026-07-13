@@ -53,9 +53,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKERFILE="${REPO_ROOT}/Dockerfile.uav"
 if [[ -z "${IMAGE_NAME:-}" ]]; then
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
-        IMAGE_NAME="rm-uav-dep:arm-v1.0"
+        IMAGE_NAME="ega-uav-dep:arm-v1.0"
     else
-        IMAGE_NAME="rm-uav-dep:amd64-v1.0"
+        IMAGE_NAME="ega-uav-dep:amd64-v1.0"
     fi
 fi
 CONTAINER_NAME="${CONTAINER_NAME:-rm_dep}"

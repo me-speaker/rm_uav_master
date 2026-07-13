@@ -1,0 +1,61 @@
+# .dockerignore — 减小 build context 1.2GB → ~50MB
+# Docker build 时排除这些文件, 加速传输和 build
+
+# ---- git / docs / IDE (完全不需要进镜像) ----
+.git/
+.gitignore
+.gitattributes
+.github/                 # 只 workflows 用, 但 workflow 不在 docker build context
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- colcon 产物 (运行时挂 host 的, 不需要 baked) ----
+install/                 # 跟项目走, 容器挂载
+build/                   # 51MB 中间产物
+log/                     # colcon log
+.colcon_ws/
+
+# ---- vendor 源码中不需要编译的部分 ----
+src/Micro-XRCE-DDS-Agent/   # 已经有 pre-built libs
+src/px4_msgs/                # 已经有 pre-built msgs
+src/mavros/                  # 已经有 pre-built msgs
+src/vision_msgs/             # 已有 pre-built
+
+# ---- 文档 / 测试 (docs 在 repo, 镜像里不需要) ----
+docs/
+*.md
+*.markdown
+README*
+LICENSE*
+
+# ---- Python cache ----
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---- 测试产物 ----
+test_results/
+*.log
+*.tmp
+*.bak
+
+# ---- 容器特定 (避免循环) ----
+.dockerignore
+Dockerfile.uav
+
+# ---- Dockerfile COPY 用的脚本不能 exclude, 留空 (见下面部署文件) ----
+
+# ---- 部署文件 (机载电脑用, 镜像里 baked 不需要) ----
+# 注意: 这些是机载电脑的 systemd / logrotate 用, 不是 Dockerfile COPY 的
+scripts/rm_dep-autostart.sh
+scripts/rm_dep-stop.sh
+scripts/rm_dep.service
+scripts/logrotate-uav.conf
+scripts/set_px4_mavlink.py
+
+# ---- 系统文件 ----
+.DS_Store
+Thumbs.db
