@@ -35,3 +35,6 @@ src/fast_lio/PCD/
 .DS_Store
 *.tmp
 CLAUDE.md
+
+# 编译产物
+/dist
