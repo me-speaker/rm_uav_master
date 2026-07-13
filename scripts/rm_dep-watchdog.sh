@@ -16,7 +16,7 @@
 
 set -uo pipefail
 
-INTERVAL="${WATCHDOG_INTERVAL:-5}"
+INTERVAL="${WATCHDOG_INTERVAL:-2}"
 FCU_DEV="${FCU_DEV:-/dev/ttyACM0}"
 LAUNCH_FILE="slam_to_mavros/odin_px4_full.launch.py"
 

@@ -98,13 +98,20 @@ RUN if [ "${ROS_APT_MIRROR}" = "tsinghua" ]; then \
 
 # 装 ROS 基础 (~150MB) + Python 基础工具 (无 colcon 编译链)
 # 部署模型: 开发机 colcon build → install/ 跟项目走 → 机载电脑只跑
-# 所以机载电脑不需要 build-essential, cmake, colcon-ros, ros-ament-* 等编译工具
+# 但机载电脑需要 colcon 系列 (Python 启动工具链, ~5MB) 来现场 build 改过的 launch / setup.py
+# C++ build 工具链 (*-dev, build-essential, cmake) 还是不加, C++ 改动 dev 机 build + rsync install/
 # BuildKit cache mount: 缓存 /var/lib/apt 加速重 build
 RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/var/cache/apt,sharing=locked \
     apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         # ROS 核心 (无 rviz2 / nav2 / perception)
         ros-${ROS_DISTRO}-ros-base \
+        # colcon ROS 启动工具链 (现场 build launch / setup.py 改, ~5MB 纯 Python)
+        python3-colcon-common-extensions \
+        python3-colcon-ros \
+        python3-colcon-ros-domain-coordinator \
+        python3-colcon-mixin \
+        python3-colcon-cmake \
         # Python ROS 基础 (rosdep / vcstool / numpy 等)
         python3-rosdep \
         python3-vcstool \

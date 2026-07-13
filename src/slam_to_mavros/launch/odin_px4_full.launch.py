@@ -105,5 +105,5 @@ def generate_launch_description():
         odin_node,
 
         # 15s 后启 mavros 和 slam (等 ODIN SDK init + USB settle)
-        TimerAction(period=15.0, actions=[mavros_node, slam_node]),
+        TimerAction(period=2.0, actions=[mavros_node, slam_node]),
     ])
