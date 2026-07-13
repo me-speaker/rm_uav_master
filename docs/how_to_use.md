@@ -1,6 +1,6 @@
   场景 1: 没接硬件，纯调试节点逻辑
 
-  # 启容器（当前已起 rm-uavsim）
+  # 启容器（当前已起 rm_dep）
   bash scripts/start_uav_container.sh status
                                                                                                      # 进容器手动跑单个节点（不依赖硬件）                                                               bash scripts/start_uav_container.sh exec bash
   # 在容器内：

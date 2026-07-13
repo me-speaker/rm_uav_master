@@ -1,0 +1,21 @@
+[Unit]
+Description=RM UAVSLAM (ODIN + PX4 + mavros) container
+Documentation=https://github.com/...
+After=docker.service
+Requires=docker.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/rm-uavsim-autostart.sh
+ExecStop=/usr/local/bin/rm-uavsim-stop.sh
+TimeoutStartSec=600
+Restart=on-failure
+RestartSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

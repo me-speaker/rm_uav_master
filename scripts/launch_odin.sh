@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CONTAINER="${CONTAINER:-rm-uavsim}"
+CONTAINER="${CONTAINER:-rm_dep}"
 
 # 前置检查
 if ! docker ps --filter "name=^${CONTAINER}$" --format '{{.Names}}' | grep -qx "$CONTAINER"; then

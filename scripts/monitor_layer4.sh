@@ -17,7 +17,7 @@
 # =============================================================================
 set -eo pipefail
 
-CONTAINER="${CONTAINER:-rm-uavsim}"
+CONTAINER="${CONTAINER:-rm_dep}"
 source_bash="source /opt/uav_ws/install/setup.bash"
 
 if ! docker ps --filter "name=^${CONTAINER}$" --format '{{.Names}}' | grep -qx "$CONTAINER"; then

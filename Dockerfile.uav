@@ -114,10 +114,10 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     && rosdep update 2>&1 | tail -3 || true
 
 # ROS 环境变量 (sourcing setup.bash 在 entrypoint)
-ENV CMAKE_PREFIX_PATH=/opt/ros/${ROS_DISTRO}:/usr/local:${CMAKE_PREFIX_PATH}
-ENV LD_LIBRARY_PATH=/opt/ros/${ROS_DISTRO}/lib:/usr/local/lib:${LD_LIBRARY_PATH}
-ENV PATH=/opt/ros/${ROS_DISTRO}/bin:/usr/local/bin:${PATH}
-ENV PYTHONPATH=/opt/ros/${ROS_DISTRO}/lib/python3.10/site-packages:${PYTHONPATH}
+ENV CMAKE_PREFIX_PATH=/opt/ros/${ROS_DISTRO}:/usr/local
+ENV LD_LIBRARY_PATH=/opt/ros/${ROS_DISTRO}/lib:/usr/local/lib
+ENV PATH=/opt/ros/${ROS_DISTRO}/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+ENV PYTHONPATH=/opt/ros/${ROS_DISTRO}/lib/python3.10/site-packages
 
 # =============================================================================
 # 2. MAVROS + MAVROS-Extras + GeographicLib datasets
@@ -130,7 +130,9 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         ros-${ROS_DISTRO}-mavros-extras \
         geographiclib-tools \
         python3-pip \
-    && pip3 install --break-system-packages pymavlink pyserial \
+    && (pip3 install --break-system-packages pymavlink pyserial 2>/dev/null \
+        || pip3 install --user pymavlink pyserial 2>/dev/null \
+        || pip3 install pymavlink pyserial) \
     && /opt/ros/${ROS_DISTRO}/lib/mavros/install_geographiclib_datasets.sh \
     && rm -rf /var/lib/apt/lists/*
 
@@ -192,20 +194,24 @@ RUN git clone --branch v1.3.1 --depth 1 --recurse-submodules \
     rm -rf ${LIVOX_SDK_PATH}/build
 
 # =============================================================================
-# 5. 工作空间结构 (空 src/, 运行时挂载)
+# 5. 工作空间结构 (空 src/, 运行时挂 host 的 rm_ws/ 整个目录)
 # =============================================================================
-RUN mkdir -p ${UAV_WS}/src ${UAV_WS}/log && \
-    mkdir -p /var/log/uav && \
-    touch ${UAV_WS}/src/.gitkeep
+# 镜像不含源码/install, 全部从 host 挂载进容器
+# 优势: dev 机上 colcon build 一次, install 跟项目走, rsync 到机载电脑即可
+RUN mkdir -p ${UAV_WS}/src ${UAV_WS}/log ${UAV_WS}/install ${UAV_WS}/build && \
+    mkdir -p /var/log/uav
 
 # =============================================================================
 # 6. 启动脚本 (baked-in)
 # =============================================================================
-COPY scripts/uav_bringup.launch.py /opt/uav_ws/uav_bringup.launch.py
-COPY scripts/px4.launch.py         /opt/uav_ws/px4.launch.py
-COPY scripts/start_uav_gui.sh      /usr/local/bin/start_uav_gui.sh
-COPY scripts/uav_entrypoint.sh    /usr/local/bin/uav_entrypoint.sh
-RUN chmod +x /usr/local/bin/start_uav_gui.sh /usr/local/bin/uav_entrypoint.sh
+COPY scripts/uav_bringup.launch.py  /opt/uav_ws/uav_bringup.launch.py
+COPY scripts/px4.launch.py          /opt/uav_ws/px4.launch.py
+COPY scripts/start_uav_gui.sh       /usr/local/bin/start_uav_gui.sh
+COPY scripts/uav_entrypoint.sh      /usr/local/bin/uav_entrypoint.sh
+COPY scripts/launch_odin_px4.sh     /opt/uav_ws/scripts/launch_odin_px4.sh
+COPY scripts/rm_dep-watchdog.sh     /opt/uav_ws/scripts/rm_dep-watchdog.sh
+RUN chmod +x /usr/local/bin/start_uav_gui.sh /usr/local/bin/uav_entrypoint.sh \
+         /opt/uav_ws/scripts/launch_odin_px4.sh /opt/uav_ws/scripts/rm_dep-watchdog.sh
 
 # =============================================================================
 # 7. udev rules (Livox USB + ODIN USB)
@@ -214,17 +220,17 @@ COPY scripts/udev/99-livox.rules /etc/udev/rules.d/99-livox.rules
 COPY scripts/udev/99-odin.rules  /etc/udev/rules.d/99-odin.rules
 
 # =============================================================================
-# 8. entrypoint: 首次自动 colcon build, 之后 source
+# 8. entrypoint: source install/setup.bash (install 来自 host 挂载)
 # =============================================================================
+# install 不 baked-in 到镜像, 来自 host 挂载. 第一次启动时 install 不存在会自动 build.
 RUN { \
         echo '#!/bin/bash'; \
         echo 'set -e'; \
-        echo 'source "/opt/ros/${ROS_DISTRO}/setup.bash" 2>/dev/null || { echo "[uav_entrypoint] ROS 未装 (base 应该自带)"; exit 1; }'; \
+        echo 'source "/opt/ros/${ROS_DISTRO}/setup.bash" 2>/dev/null || { echo "[uav_entrypoint] ROS 未装"; exit 1; }'; \
         echo 'cd ${UAV_WS}'; \
         echo ''; \
         echo 'if [ ! -f "${UAV_WS}/install/setup.bash" ]; then'; \
-        echo '    echo "[uav_entrypoint] first run, colcon build (5-10 min on arm64) ..."'; \
-        echo '    # rosdep update (idempotent)'; \
+        echo '    echo "[uav_entrypoint] install/setup.bash 不存在, 首次启动需要 build (5-10 min on arm64) ..."'; \
         echo '    rosdep update 2>/dev/null || true'; \
         echo '    colcon build --symlink-install \'; \
         echo '        --packages-select vision_msgs livox_ros_driver2 fast_lio odin_ros_driver slam_to_mavros \'; \
@@ -234,7 +240,7 @@ RUN { \
         echo '    echo "[uav_entrypoint] build done"'; \
         echo 'fi'; \
         echo ''; \
-        echo 'source "${UAV_WS}/install/setup.bash" 2>/dev/null || true'; \
+        echo 'source "${UAV_WS}/install/setup.bash"'; \
         echo ''; \
         echo 'export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}'; \
         echo 'export ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}'; \

@@ -12,7 +12,7 @@
 # =============================================================================
 set -e
 
-CONTAINER="${CONTAINER:-rm-uavsim}"
+CONTAINER="${CONTAINER:-rm_dep}"
 
 # 确保 pymavlink 在
 if ! docker exec "$CONTAINER" bash -c 'python3 -c "import pymavlink" 2>/dev/null'; then

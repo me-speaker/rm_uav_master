@@ -17,7 +17,7 @@
 #   bash scripts/start_uav_container.sh --bringup             # ↑ 同上, 隐含 start
 #   bash scripts/start_uav_container.sh --bringup-gui         # + 启 noVNC
 #   bash scripts/start_uav_container.sh --build               # 先 build 镜像再启
-#   bash scripts/start_uav_container.sh --lidar mid360 --lidar-ip 192.168.1.150
+#   bash scripts/start_uav_container.sh --lidar mid360 --lidar-ip <IP>  # Mid360
 #   bash scripts/start_uav_container.sh --lidar odin
 #   bash scripts/start_uav_container.sh --fcu-url /dev/ttyACM0:57600
 #   bash scripts/start_uav_container.sh --device /dev/ttyACM0
@@ -40,7 +40,7 @@
 #   --workspace-dir <dir>    colcon 产物目录 install/build/log (默认 ${REPO_ROOT}/.colcon_ws)
 #   --config <dir>           config 目录 (默认 ${REPO_ROOT}/config, 可选)
 #   --image <name:tag>       镜像 (默认按 host 架构: uavsim:arm-v3.0 / uavsim:amd64-v3.0)
-#   --name <name>            容器名 (默认 rm-uavsim)
+#   --name <name>            容器名 (默认 rm_dep)
 #   --no-tty                 CI 模式
 #   --rm                     容器退出即删
 # =============================================================================
@@ -53,16 +53,17 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKERFILE="${REPO_ROOT}/Dockerfile.uav"
 if [[ -z "${IMAGE_NAME:-}" ]]; then
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
-        IMAGE_NAME="uavsim:arm-v3.0"
+        IMAGE_NAME="rm-uav-dep:arm-v1.0"
     else
-        IMAGE_NAME="uavsim:amd64-v3.0"
+        IMAGE_NAME="rm-uav-dep:amd64-v1.0"
     fi
 fi
-CONTAINER_NAME="${CONTAINER_NAME:-rm-uavsim}"
+CONTAINER_NAME="${CONTAINER_NAME:-rm_dep}"
 SRC_DIR="${SRC_DIR:-${REPO_ROOT}/src}"
-# colcon workspace artifacts (install/build/log) 持久化到 host, 避免每次重启重新 build
-# 默认放 ${REPO_ROOT}/.colcon_ws, 不污染源码目录, .gitignore 覆盖
-WORKSPACE_DIR="${WORKSPACE_DIR:-${REPO_ROOT}/.colcon_ws}"
+# colcon workspace artifacts (install/build/log) 跟项目走, 都在 rm_ws/ 下
+# dev 机上 build 一次, rsync 整个 rm_ws/ 到机载电脑即可
+# .gitignore 已覆盖 install/ build/ log/
+WORKSPACE_DIR="${WORKSPACE_DIR:-${REPO_ROOT}}"
 # scripts/ 也挂进容器, 改 launch / entrypoint 不用 rebuild 镜像
 SCRIPTS_DIR="${SCRIPTS_DIR:-${REPO_ROOT}/scripts}"
 CONFIG_DIR="${CONFIG_DIR:-${REPO_ROOT}/config}"
@@ -211,10 +212,11 @@ do_start() {
         fi
     fi
 
-    # ---- colcon artifacts (install/build/log) 持久化到 host ----------------
-    # 首次启动: host 目录是空 → entrypoint 跑 colcon build → 产物落 host
-    # 之后启动: install/setup.bash 存在 → entrypoint 跳过 build → 秒启
-    # 强制 clean rebuild: rm -rf .colcon_ws/{install,build,log}/. 然后重启
+    # ---- colcon artifacts (install/build/log) 跟项目走 ---------------------
+    # 默认 WORKSPACE_DIR=${REPO_ROOT}, install/build/log 都在 rm_ws/ 下
+    # dev 机上 colcon build 一次, rsync 整个 rm_ws/ 到机载电脑即可
+    # 后续启动: install/setup.bash 存在 → entrypoint 跳过 build → 秒启
+    # 强制 clean rebuild: rm -rf install/ build/ log/ 然后重启
     mkdir -p "$WORKSPACE_DIR/install" "$WORKSPACE_DIR/build" "$WORKSPACE_DIR/log"
     info "mount ws:   $WORKSPACE_DIR/{install,build,log}  ->  /opt/uav_ws/{install,build,log}"
     mount_args+=( -v "${WORKSPACE_DIR}/install:/opt/uav_ws/install" )

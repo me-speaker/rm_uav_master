@@ -107,7 +107,7 @@ ODIN driver 在 Jetson 上跑可能要装额外包:
 
 ```bash
 # Jetson 自带的 l4t (Linux for Tegra) 不一定包含 libusb, 容器内可能要:
-docker exec rm-uavsim bash -c \
+docker exec rm_dep bash -c \
     'apt-get update && apt-get install -y libusb-1.0-0-dev udev && udevadm trigger'
 ```
 
@@ -162,7 +162,7 @@ cd ~/rm_ws && bash scripts/build_arm64.sh && bash scripts/start_uav_container.sh
 # 之后改代码:
 vim src/slam_to_mavros/slam_to_mavros/slam_to_mavros_node.py
 # 容器内重启节点即生效 (symlink)
-docker exec rm-uavsim bash -c 'pkill -f slam_to_mavros_node && sleep 1 && ros2 run slam_to_mavros slam_to_mavros_node &'
+docker exec rm_dep bash -c 'pkill -f slam_to_mavros_node && sleep 1 && ros2 run slam_to_mavros slam_to_mavros_node &'
 ```
 ## 10. 3 种 base image 选项 (Dockerfile v2.0)
 

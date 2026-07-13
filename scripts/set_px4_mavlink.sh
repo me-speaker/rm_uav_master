@@ -19,4 +19,4 @@
 set -e
 
 # 把参数透传给 python script (--show / --reset / --device / ...)
-exec docker exec rm-uavsim python3 /opt/uav_ws/scripts/set_px4_mavlink.py "$@"
+exec docker exec rm_dep python3 /opt/uav_ws/scripts/set_px4_mavlink.py "$@"

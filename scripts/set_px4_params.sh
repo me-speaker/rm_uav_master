@@ -18,7 +18,7 @@
 # =============================================================================
 set -eo pipefail
 
-CONTAINER="${CONTAINER:-rm-uavsim}"
+CONTAINER="${CONTAINER:-rm_dep}"
 source_bash="source /opt/uav_ws/install/setup.bash"
 
 # 颜色

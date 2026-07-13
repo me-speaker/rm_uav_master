@@ -5,7 +5,7 @@
 
 用法:
   1. 停 mavros (独占 /dev/ttyACM0):
-     docker exec rm-uavsim bash -c 'pkill -9 -f mavros_node'
+     docker exec rm_dep bash -c 'pkill -9 -f mavros_node'
   2. 跑这个 injector (它会自己开 pymavlink 连 PX4):
      python3 /opt/uav_ws/scripts/px4_vision_injector.py
   3. 同时跑 fake_odom (产 /Odometry):

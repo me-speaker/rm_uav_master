@@ -114,7 +114,7 @@ bash scripts/start_uav_container.sh --bringup-gui \
 容器内自动起 Xvfb + x11vnc + noVNC。在另一终端:
 
 ```bash
-docker exec -it rm-uavsim \
+docker exec -it rm_dep \
     bash -lc "DISPLAY=:99 ros2 launch /opt/uav_ws/uav_bringup.launch.py with_rviz:=true"
 ```
 
@@ -124,7 +124,7 @@ docker exec -it rm-uavsim \
 
 ```bash
 bash scripts/start_uav_container.sh
-docker exec -it rm-uavsim bash
+docker exec -it rm_dep bash
 # 容器内手动:
 ros2 launch /opt/uav_ws/uav_bringup.launch.py
 ```
@@ -148,7 +148,7 @@ bash scripts/start_uav_container.sh stop
 ```bash
 # 主机改 ~/rm_ws/src/slam_to_mavros/slam_to_mavros/slam_to_mavros_node.py
 # 因为 --symlink-install, install 里直接软链回 src, .py 改动立刻生效
-docker exec rm-uavsim bash -c \
+docker exec rm_dep bash -c \
     "pkill -f slam_to_mavros_node; sleep 1; \
      ros2 run slam_to_mavros slam_to_mavros_node &"
 ```
@@ -165,7 +165,7 @@ docker exec rm-uavsim bash -c \
 ```bash
 # 主机改 ~/rm_ws/src/fast_lio/src/laserMapping.cpp
 # 需要在容器内 rebuild:
-docker exec rm-uavsim bash -c \
+docker exec rm_dep bash -c \
     "cd /opt/uav_ws && colcon build --packages-select fast_lio --symlink-install"
 # 然后重启 fast_lio 节点
 ```
@@ -180,7 +180,7 @@ bash scripts/start_uav_container.sh stop
 docker build -f Dockerfile.uav -t uavsim:uav-v1.0 .   # 重 build 镜像
 bash scripts/start_uav_container.sh --bringup
 # 或: 临时用 docker cp 直接覆盖 (避免重 build):
-docker cp scripts/uav_bringup.launch.py rm-uavsim:/opt/uav_ws/uav_bringup.launch.py
+docker cp scripts/uav_bringup.launch.py rm_dep:/opt/uav_ws/uav_bringup.launch.py
 ```
 
 ## 8. PX4 端参数 (必设)

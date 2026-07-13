@@ -16,7 +16,7 @@
 # =============================================================================
 set -e
 
-CONTAINER="${CONTAINER:-rm-uavsim}"
+CONTAINER="${CONTAINER:-rm_dep}"
 
 if ! docker ps --filter "name=^${CONTAINER}$" --format '{{.Names}}' | grep -qx "$CONTAINER"; then
     echo "[error] 容器 $CONTAINER 没在跑" >&2

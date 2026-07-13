@@ -96,18 +96,10 @@ PARAMS_VISION = [
     # BARO 关掉避免气压干扰 vision 高度
     ('EKF2_BARO_CTRL', 0, 6, 'disable baro (只用 vision 高度)'),
 
-    # ----- micro-xrce-dds (PX4 ↔ ROS2 direct, 绕过 mavros) -----
-    # UXRCE_DDS_CFG=3 = USB 端口 (PX4 USB-C → 容器 /dev/ttyACM0)
-    ('UXRCE_DDS_CFG',  3, 2, 'enable micro-xrce-dds on USB (替代 mavros)'),
-    # MAV_0_CONFIG=0 释放 TELEM1 给 XRCE-DDS (PX4 内部 TELEM1/USB-C 共享)
-    ('MAV_0_CONFIG',   0, 6, 'disable MAVLink on TELEM1 (XRCE 独占)'),
+    # ----- MAVLink 通道分配 (mavros 用 TELEM1, 禁用 TELEM2 避免冲突) -----
+    ('MAV_0_CONFIG',   0, 6, 'disable MAVLink on TELEM1 (mavros 独占)'),
     ('MAV_1_CONFIG',   0, 6, 'disable MAVLink on TELEM2 (避免干扰)'),
-    # SER_TEL1_BAUD 必须匹配 agent baudrate
-    ('SER_TEL1_BAUD',  921600, 6, 'TELEM1 baudrate (匹配 agent)'),
-    # UXRCE_DDS_KEY=0 默认; key > 0 时多个 client 用不同 key
-    ('UXRCE_DDS_KEY',  0, 6, 'session key (默认 0)'),
-    # 时间同步 (默认开)
-    ('UXRCE_DDS_SYNCT', 1, 6, '时间同步 (默认开)'),
+    ('SER_TEL1_BAUD',  921600, 6, 'TELEM1 baudrate (匹配 mavros)'),
 
     # ----- 验证用 -----
     ('MAV_ODOM_LP',    1, 2, 'PX4 回传 ODOMETRY, --verify 用来验证 fusion 在跑'),
