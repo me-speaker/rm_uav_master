@@ -42,13 +42,11 @@
 ARG BASE_IMAGE=ubuntu:22.04
 ARG ROS_DISTRO=humble
 ARG ROS_APT_MIRROR=tsinghua   # tsinghua | huawei | official
-ARG WITH_GUI=no   # 默认 no (机载电脑无 GUI), dev 时 --build-arg WITH_GUI=yes 打开
 
 FROM ${BASE_IMAGE} AS uav
 
 # BuildKit: 必须重新声明才能在 FROM 之后的 RUN/ENV 里引用
 ARG ROS_DISTRO
-ARG WITH_GUI
 ARG ROS_APT_MIRROR
 
 LABEL maintainer="rm_ws Project <speaker@example.com>" \
@@ -112,13 +110,17 @@ RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
         python3-colcon-ros-domain-coordinator \
         python3-colcon-mixin \
         python3-colcon-cmake \
-        # Python ROS 基础 (rosdep / vcstool / numpy 等)
+        # Python ROS 基础 (rosdep / numpy 等, runtime 调试偶尔用)
+        # 删 vcstool / rosinstall-generator (runtime 不用: 节省 ~1MB)
         python3-rosdep \
-        python3-vcstool \
         python3-argcomplete \
-        python3-rosinstall-generator \
         python3-numpy \
         python3-pip \
+        # 显式装 python3-colcon-common-extensions 两次 (确保 colcon binary 真的装上)
+        # 第一次 build 镜像时, build 一次就够
+        python3-colcon-common-extensions 2>&1 | tail -3 || true \
+        # 验证 colcon binary 存在
+        && which colcon || (echo "ERROR: colcon binary not found, installing again" && apt-get install -y --no-install-recommends --reinstall python3-colcon-common-extensions) \
     && rosdep init 2>/dev/null || true \
     && (echo "yaml https://mirrors.tuna.tsinghua.edu.cn/rosdistro/ros2/rosdep.yaml" > /etc/ros/rosdep/sources.list.d/99-tsinghua.list 2>/dev/null || true) \
     && rosdep update 2>&1 | tail -3 || true
@@ -174,31 +176,18 @@ RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
         ros-${ROS_DISTRO}-message-filters \
         ros-${ROS_DISTRO}-image-transport \
         ros-${ROS_DISTRO}-cv-bridge \
-        # 工具
+        # 工具 (drone 端只用 psmisc=killall/wd, usbutils=lsusb, udev=trigger)
+        # runtime 不需要: git (-80MB), GUI 栈 (noVNC ~25MB + xvfb)
         psmisc wget usbutils udev iputils-ping net-tools bash-completion \
-        ca-certificates git \
+        ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# GUI 栈 (默认关, ARG WITH_GUI=yes 打开)
-# rviz2 已经在 ros-humble-desktop 里装了, 这里只需 X server + noVNC
-RUN if [ "${WITH_GUI}" = "yes" ]; then \
-        apt-get update && apt-get install -y --no-install-recommends \
-            xvfb x11vnc xserver-xorg-video-dummy mesa-utils \
-            python3-websockify \
-        && rm -rf /var/lib/apt/lists/* \
-        && mkdir -p /opt/novnc && \
-           curl -fsSL https://gh-proxy.com/https://github.com/novnc/noVNC/archive/refs/tags/v1.4.0.tar.gz \
-               | tar -xz --strip-components=1 -C /opt/novnc && \
-           ln -sf /opt/novnc/utils/novnc_proxy /usr/local/bin/novnc_proxy && \
-           rm -rf /opt/novnc/.git; \
-    fi
-
 # =============================================================================
-# 4. (跳过) Livox-SDK2 源码编译
+# 4. (跳过) Livox-SDK2 源码编译 + GUI 栈 (runtime 不需要)
 # =============================================================================
 # odin_ros_driver 包自带 prebuilt livox SDK (liblydHostApi_arm.a),
 # 所以镜像里不需要从源码编译 Livox-SDK2.
-# 省 ~50-100MB image size + 2-3 min build time.
+# drone 端无 GUI, 去掉 noVNC / X server (WITH_GUI=yes dev 选项彻底删掉)。
 
 # =============================================================================
 # 5. 工作空间结构 (空 src/, 运行时挂 host 的 rm_ws/ 整个目录)
@@ -240,22 +229,25 @@ COPY scripts/udev/99-odin.rules  /etc/udev/rules.d/99-odin.rules
 # =============================================================================
 # 8. entrypoint: source install/setup.bash (install 来自 host 挂载)
 # =============================================================================
-# install 不 baked-in 到镜像, 来自 host 挂载. 第一次启动时 install 不存在会自动 build.
+# install 不 baked-in 到镜像, 来自 host 挂载. runtime 镜像无 build 工具链
+# (gcc/cmake/colcon-cmake), install/setup.bash 缺失时容器直接 exit + 明确报错.
+# 修复链路: dev 端 build_install.sh -> deploy_to_drone.sh -> drone systemctl restart.
 RUN { \
         echo '#!/bin/bash'; \
         echo 'set -e'; \
         echo 'source "/opt/ros/${ROS_DISTRO}/setup.bash" 2>/dev/null || { echo "[uav_entrypoint] ROS 未装"; exit 1; }'; \
         echo 'cd ${UAV_WS}'; \
         echo ''; \
+        echo '# Runtime 镜像不带 build 工具链, install/setup.bash 必须 prebuild 后从 host 挂载'; \
+        echo '# 缺失时直接 exit, 不再尝试现场 build (之前会跑 colcon build 但缺 cmake/gcc 必败)'; \
         echo 'if [ ! -f "${UAV_WS}/install/setup.bash" ]; then'; \
-        echo '    echo "[uav_entrypoint] install/setup.bash 不存在, 首次启动需要 build (5-10 min on arm64) ..."'; \
-        echo '    rosdep update 2>/dev/null || true'; \
-        echo '    colcon build --symlink-install \'; \
-        echo '        --packages-select vision_msgs livox_ros_driver2 fast_lio odin_ros_driver slam_to_mavros \'; \
-        echo '        --cmake-args -DCMAKE_BUILD_TYPE=Release \'; \
-        echo '                     -DCMAKE_PREFIX_PATH="/usr/local;/opt/ros/${ROS_DISTRO};${UAV_WS}/install" \'; \
-        echo '        --event-handlers console_direct+'; \
-        echo '    echo "[uav_entrypoint] build done"'; \
+        echo '    echo "[uav_entrypoint] ❌ FATAL: /opt/uav_ws/install/setup.bash 缺失" >&2'; \
+        echo '    echo "[uav_entrypoint] runtime 镜像不带 build 工具链, 不能现场 build" >&2'; \
+        echo '    echo "[uav_entrypoint] 修复步骤:" >&2'; \
+        echo '    echo "[uav_entrypoint]   1. dev 机: bash scripts/build_install.sh  (生成 install/)" >&2'; \
+        echo '    echo "[uav_entrypoint]   2. dev 机: bash scripts/deploy_to_drone.sh ega-orin-nano-1@192.168.100.3" >&2'; \
+        echo '    echo "[uav_entrypoint]   3. drone:  sudo systemctl restart rm_dep.service" >&2'; \
+        echo '    exit 1'; \
         echo 'fi'; \
         echo ''; \
         echo 'source "${UAV_WS}/install/setup.bash"'; \
@@ -271,8 +263,7 @@ RUN { \
         echo 'exec "$@"'; \
     } > /ros_entrypoint.sh && chmod +x /ros_entrypoint.sh
 
-ENV IMAGE_VERSION=3.0
-ENV WITH_GUI=${WITH_GUI}
+ENV IMAGE_VERSION=4.0-runtime
 
 # =============================================================================
 # 让 docker exec bash 自动 source ROS (避免每次手动 source)

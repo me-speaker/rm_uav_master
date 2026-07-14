@@ -18,6 +18,7 @@ set -uo pipefail
 
 INTERVAL="${WATCHDOG_INTERVAL:-2}"
 FCU_DEV="${FCU_DEV:-/dev/ttyACM0}"
+CONTAINER="${1:-rm_dep}"  # autostart 传容器名过来
 LAUNCH_FILE="slam_to_mavros/odin_px4_full.launch.py"
 
 LOG_DIR="${LOG_DIR:-/var/log/uav}"
@@ -32,7 +33,8 @@ exec >>"$WD_LOG" 2>&1
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*"; }
 
-# 写 PID
+# 写 PID (先删旧的, 避免 Permission denied)
+rm -f "$PID_FILE" 2>/dev/null
 echo $$ > "$PID_FILE"
 log "watchdog 启动 PID=$$ interval=${INTERVAL}s fcu_dev=$FCU_DEV"
 
@@ -77,13 +79,13 @@ while true; do
         fi
     fi
 
-    # 3. 启 ros2 launch (后台 + setsid 解耦 ssh session)
+    # 3. 启 ros2 launch (在容器内跑, 用 docker exec)
     log "🚀 $FCU_DEV 出现, 启 ros2 launch slam_to_mavros/odin_px4_full.launch.py ..."
-    cd /opt/uav_ws
-    nohup setsid bash -c "
-        source /opt/uav_ws/install/setup.bash
-        exec ros2 launch $LAUNCH_FILE
-    " >"$LAUNCH_LOG" 2>&1 &
+    # watchdog 可能跑在 host 或容器内, 用 docker exec 兼容两种
+    # 用 source 命令组合避免 bash -c 嵌套引号
+    nohup setsid docker exec "$CONTAINER" \
+        bash -c 'source /opt/uav_ws/install/setup.bash && exec ros2 launch slam_to_mavros odin_px4_full.launch.py' \
+        >"$LAUNCH_LOG" 2>&1 &
     launch_pid=$!
 
     log "    launch PID: $launch_pid, log: $LAUNCH_LOG"

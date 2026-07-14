@@ -3,7 +3,7 @@
 # deploy_to_drone.sh — 一键打包 dev → drone 部署物
 # =============================================================================
 # 跑这个脚本会生成:
-#   - ega-uav-dep-arm-v1.0.tar.gz  (docker image)
+#   - ega-uav_runtime-v1.0.tar.gz  (docker image)
 #   - rm_ws.tar.gz                 (rm_ws/ 项目, 含 install/)
 #
 # 然后 ssh scp 到机载电脑
@@ -20,7 +20,7 @@ set -eo pipefail
 DRONE_TARGET="${1:?用法: $0 <user>@<host>}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-IMAGE_TAG="${IMAGE_TAG:-ega-uav-dep:arm-v1.0}"
+IMAGE_TAG="${IMAGE_TAG:-ega-uav:runtime-v1.0}"
 DIST_DIR="${REPO_ROOT}/dist"
 
 log() { echo "[deploy] $*"; }
@@ -61,7 +61,7 @@ echo "✅ 部署文件就绪, 已 scp 到 $DRONE_TARGET"
 echo ""
 echo "在 $DRONE_TARGET 上:"
 echo "  1. 加载镜像:"
-echo "       docker load -i ~/ega-uav-dep_arm-v1.0.tar.gz"
+echo "       docker load -i ~/ega-uav_runtime-v1.0.tar.gz"
 echo "  2. 解压 rm_ws/:"
 echo "       tar -xzf ~/rm_ws.tar.gz -C ~"
 echo "  3. 一次性安装 systemd + logrotate:"

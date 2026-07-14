@@ -1,4 +1,4 @@
-"""全链路 launch file: ODIN + PX4 mavros + slam_to_mavros.
+"""全链路 launch file: ODIN + PX4 mavros + slam_to_mavros + ros2 bag 录制.
 
 一句话启完整个外部定位链路 (替代 launch_odin_px4.sh 的 shell 拼接).
 
@@ -11,13 +11,14 @@
     force_ros_stamp     (bool) default True  (ODIN 时间戳修复)
     fcu_url             (str)  default /dev/ttyACM0:921600
     gcs_url             (str)  default ''     (不监听 GCS)
+    record_bag          (bool) default True  (录 ODIN 定位 + IMU 到 bag)
 """
 import os
 
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, TimerAction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, TimerAction
 from launch.substitutions import LaunchConfiguration, Command
 from launch_ros.actions import Node
 
@@ -39,6 +40,9 @@ def generate_launch_description():
     gcs_url_arg = DeclareLaunchArgument(
         'gcs_url', default_value='',
         description='MAVLink GCS URL (empty = no listener)')
+    record_bag_arg = DeclareLaunchArgument(
+        'record_bag', default_value='True',
+        description='Record ODIN odometry + IMU to ros2 bag (drone 端 ~/rm_ws/log/bags/)')
     tgt_system_arg = DeclareLaunchArgument(
         'tgt_system', default_value='1')
     tgt_component_arg = DeclareLaunchArgument(
@@ -96,9 +100,27 @@ def generate_launch_description():
         }],
     )
 
+    # ---- 4. ros2 bag 录制 (跟 launch 同 lifecycle, 启动后录, launch 停时停) ---
+    # 录 /odin1/{odometry,odometry_highfreq,imu}: 50Hz + 200Hz + 400Hz 定位 + IMU
+    # bag 文件名带 UTC timestamp (避免覆盖), 写到 /opt/uav_ws/log/bags/
+    # 跟其他 log 一样 mount 到 drone 端 ~/rm_ws/log/bags/, 飞行完手动 scp 取回 dev 机
+    record_bag_proc = ExecuteProcess(
+        cmd=[
+            'ros2', 'bag', 'record',
+            '-o', '/opt/uav_ws/log/bags/flight_$(date -u +%Y%m%d_%H%M%S)',
+            '/odin1/odometry',
+            '/odin1/odometry_highfreq',
+            '/odin1/imu',
+        ],
+        output='screen',
+        # 不 respawn — bag 录制失败不重启整个 launch (drone 端存储保护)
+        condition=LaunchConfiguration('record_bag'),  # 可关 (--record-bag false)
+    )
+
     return LaunchDescription([
         # args
         odom_topic_arg, force_stamp_arg, fcu_url_arg, gcs_url_arg,
+        record_bag_arg,
         tgt_system_arg, tgt_component_arg, fcu_protocol_arg,
 
         # ODIN 先起 (不 respawn, SDK bug 留 watchdog)
@@ -106,4 +128,7 @@ def generate_launch_description():
 
         # 15s 后启 mavros 和 slam (等 ODIN SDK init + USB settle)
         TimerAction(period=2.0, actions=[mavros_node, slam_node]),
+
+        # bag 录制 (跟 launch 同 lifecycle, default 启)
+        record_bag_proc,
     ])

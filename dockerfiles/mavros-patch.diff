@@ -1,0 +1,41 @@
+From: rm_ws project <speaker@example.com>
+Subject: [PATCH] mavros humble vision_pose: 修复 humble node_declare_and_watch_parameter lambda 在初始默认值时不 fire 的 bug
+
+rclcpp humble 的 node_declare_and_watch_parameter 在参数值为初始默认值时不会触发 lambda 回调,
+导致 vision_pose plugin 的 ~/pose 和 ~/pose_cov subscription 永远不会创建,
+slam_to_mavros_node 发 /mavros/vision_pose/pose 时无人订阅 → PX4 EKF2 vision fusion 链路断。
+
+workaround: 在构造函数里直接 create_subscription, 不依赖 parameter watcher。
+
+用法 (在 src/mavros submodule root 下):
+    git apply /path/to/mavros-patch.diff
+    # 或反向:
+    git apply -R /path/to/mavros-patch.diff
+
+涉及文件: mavros_extras/src/plugins/vision_pose_estimate.cpp
+变更: +11 行 (无删除)
+---
+diff --git a/mavros_extras/src/plugins/vision_pose_estimate.cpp b/mavros_extras/src/plugins/vision_pose_estimate.cpp
+index 1673681d..f39b5137 100644
+--- a/mavros_extras/src/plugins/vision_pose_estimate.cpp
++++ b/mavros_extras/src/plugins/vision_pose_estimate.cpp
+@@ -74,6 +74,17 @@ public:
+         }
+       });
+
++    // PATCH rm_ws: mavros humble node_declare_and_watch_parameter lambda
++    // 在初始默认值时不会 fire (rclcpp humble 已知 bug). 直接建 subscription。
++    vision_sub = node->create_subscription<geometry_msgs::msg::PoseStamped>(
++      "~/pose", 10, std::bind(
++        &VisionPoseEstimatePlugin::vision_cb, this, _1));
++    vision_cov_sub = node->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
++      "~/pose_cov", 10, std::bind(
++        &VisionPoseEstimatePlugin::vision_cov_cb, this, _1));
++    RCLCPP_INFO(get_logger(),
++      "PATCH rm_ws: vision_pose subscription explicitly created in constructor");
++
+     node_declare_and_watch_parameter(
+       "tf/frame_id", "map", [&](const rclcpp::Parameter & p) {
+         tf_frame_id = p.as_string();
+--
+2.34.1

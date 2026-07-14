@@ -53,9 +53,9 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DOCKERFILE="${REPO_ROOT}/Dockerfile.uav"
 if [[ -z "${IMAGE_NAME:-}" ]]; then
     if [[ "$(uname -m)" == "aarch64" || "$(uname -m)" == "arm64" ]]; then
-        IMAGE_NAME="ega-uav-dep:arm-v1.0"
+        IMAGE_NAME="ega-uav:runtime-v1.0"
     else
-        IMAGE_NAME="ega-uav-dep:amd64-v1.0"
+        IMAGE_NAME="ega-uav:runtime-v1.0"
     fi
 fi
 CONTAINER_NAME="${CONTAINER_NAME:-rm_dep}"
@@ -251,8 +251,9 @@ do_start() {
             # 自动检测: lsusb 找 vendor 2207 product 0019
             local odin_auto
             # mawk 不支持 match() 的数组捕获, 用 sed 提取 Bus/Device
+            # set -eo pipefail 模式下 grep 无 match 退出 1 会触发 set -e exit, 用 || true 包
             odin_auto=$(lsusb 2>/dev/null | grep "2207:0019" | head -1 \
-                | sed -n 's/.*Bus \([0-9]\+\) Device \([0-9]\+\).*/\1\/\2/p')
+                | sed -n 's/.*Bus \([0-9]\+\) Device \([0-9]\+\).*/\1\/\2/p' || true)
             if [[ -n "$odin_auto" ]]; then
                 odin_usb_path="/dev/bus/usb/${odin_auto}"
             fi

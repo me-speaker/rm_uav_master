@@ -1,0 +1,167 @@
+# =============================================================================
+# Dockerfile.uav.build — dev 端 build 镜像 (用于 colcon build 生成 install/)
+# =============================================================================
+# 用途: dev 机 (arm64 / amd64) 一次性 build, 产物 install/ + build/ + log/ 写到
+#       host 的 ~/rm_ws/, 然后 deploy_to_drone.sh 把 install/ 推到 drone.
+#
+# 跟 Dockerfile.uav (runtime) 的区别:
+#   - 这个镜像 FROM ega-uav:runtime-v1.0 复用 runtime layer (节省 build time)
+#   - 增量装 build 工具链 (gcc/cmake/pkg-config/ninja + *-dev headers)
+#   - 不 baked-in 任何源码或 install 产物
+#   - **不**推 drone, 只在 dev 端用
+#
+# Build:
+#   # 1. 先 build + push runtime image
+#   docker build -f Dockerfile.uav -t ega-uav:runtime-v1.0 .
+#
+#   # 2. 再 build dev image (复用 runtime)
+#   docker build -f Dockerfile.uav.build -t ega-uav:build-v1.0 \
+#       --build-arg BASE_IMAGE=ega-uav:runtime-v1.0 .
+#
+# 跑 (用 scripts/build_install.sh 包装):
+#   docker run --rm -v $(pwd):/opt/uav_ws ega-uav:build-v1.0 \
+#       bash -c 'source /opt/ros/humble/setup.bash && colcon build --symlink-install'
+# =============================================================================
+
+# ---- Build args --------------------------------------------------------------
+ARG BASE_IMAGE=ega-uav:runtime-v1.0
+ARG ROS_DISTRO=humble
+ARG ROS_APT_MIRROR=tsinghua   # tsinghua | huawei | official
+
+FROM ${BASE_IMAGE} AS build
+
+# BuildKit: 重新声明才能在 FROM 之后的 RUN/ENV 里引用
+ARG ROS_DISTRO
+ARG ROS_APT_MIRROR
+
+LABEL maintainer="rm_ws Project <speaker@example.com>" \
+      version="1.0-build" \
+      description="Dev-side build image (extends runtime image + build toolchain + SLAM/ODIN dev headers). Multi-arch. NOT for drone — install/ artifacts extracted to host via -v mount."
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV ROS_DISTRO=${ROS_DISTRO}
+ENV UAV_WS=/opt/uav_ws
+
+# =============================================================================
+# 1. 增量装 build-only 工具链 + dev headers
+# =============================================================================
+# runtime image 已装 ROS-base + mavros + GeographicLib + 各种 runtime msgs
+# 这里只装 build dev image 需要的增量包
+# 不用 --mount=type=cache (Tegra fuse cache 在 docker buildx 里常卡), 用普通 apt cache
+RUN if [ "${ROS_APT_MIRROR}" = "tsinghua" ]; then \
+        curl -sSL https://mirrors.tuna.tsinghua.edu.cn/rosdistro/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] https://mirrors.tuna.tsinghua.edu.cn/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+            > /etc/apt/sources.list.d/ros2.list; \
+    elif [ "${ROS_APT_MIRROR}" = "huawei" ]; then \
+        curl -sSL https://mirrors.huaweicloud.com/rosdistro/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] https://mirrors.huaweicloud.com/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+            > /etc/apt/sources.list.d/ros2.list; \
+    else \
+        curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+            -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" \
+            > /etc/apt/sources.list.d/ros2.list; \
+    fi
+
+# 删 runtime 装的 apt ros-humble-mavros-extras (让 colcon 从 src build src/mavros/mavros_extras 带 patch)
+# 注意: --purge 用 lib 还会被 unhold 影响, 用 --auto-remove 跳过依赖检查
+# 如果 dpkg 拒绝就 skip (apt 装的 mavros-extras 不会删除 build 产物, 只是跟 src 重复)
+RUN (apt-get remove --auto-remove -y ros-humble-mavros-extras 2>&1 | tail -3) || true
+
+# 装 build-only 增量包
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        # colcon build 工具链 (runtime 不需要)
+        python3-colcon-common-extensions \
+        python3-colcon-ros \
+        python3-colcon-ros-domain-coordinator \
+        python3-colcon-mixin \
+        python3-colcon-cmake \
+        python3-rosdep \
+        python3-vcstool \
+        python3-argcomplete \
+        python3-rosinstall-generator \
+        # C/C++ 编译链 (build-essential 包含 gcc/g++/make/dpkg-dev)
+        build-essential \
+        cmake \
+        pkg-config \
+        ninja-build \
+        # SLAM deps (fast_lio / livox_ros_driver2)
+        libeigen3-dev \
+        libpcl-dev \
+        libyaml-cpp-dev \
+        libgoogle-glog-dev \
+        libgflags-dev \
+        # ODIN deps (host_sdk_sample)
+        libusb-1.0-0-dev \
+        libssl-dev \
+        libopencv-contrib-dev \
+        # ROS build-time msg generators (colcon build src/* 用来编 .msg/.srv)
+        ros-${ROS_DISTRO}-rosidl-default-generators \
+        ros-${ROS_DISTRO}-ament-cmake-auto \
+        ros-${ROS_DISTRO}-eigen3-cmake-module \
+        # 调试 + 辅助
+        gdb \
+        strace \
+    && rosdep init 2>/dev/null || true \
+    && (echo "yaml https://mirrors.tuna.tsinghua.edu.cn/rosdistro/ros2/rosdep.yaml" > /etc/ros/rosdep/sources.list.d/99-tsinghua.list 2>/dev/null || true) \
+    && rosdep update 2>&1 | tail -3 || true
+
+# ROS 环境变量 (runtime image 已设, 这里只补强 + 强制覆盖)
+ENV CMAKE_PREFIX_PATH=/opt/ros/${ROS_DISTRO}:/usr/local:/opt/uav_ws/install
+ENV LD_LIBRARY_PATH=/opt/ros/${ROS_DISTRO}/lib:/usr/local/lib
+ENV PATH=/opt/ros/${ROS_DISTRO}/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin
+ENV PYTHONPATH=/opt/ros/${ROS_DISTRO}/lib/python3.10/site-packages
+
+# Auto-source ROS on every interactive shell
+RUN { \
+        echo '#!/bin/bash'; \
+        echo '# Auto-source ROS on any interactive shell'; \
+        echo 'source /opt/ros/${ROS_DISTRO}/setup.bash 2>/dev/null'; \
+        echo '[ -f $UAV_WS/install/setup.bash ] && source $UAV_WS/install/setup.bash 2>/dev/null'; \
+    } > /etc/profile.d/uav_ws.sh && chmod +x /etc/profile.d/uav_ws.sh
+
+# 工作空间结构 (空 src/, 运行时 -v 挂 host 的 rm_ws/)
+RUN mkdir -p ${UAV_WS}/src ${UAV_WS}/log ${UAV_WS}/install ${UAV_WS}/build
+
+# 健康检查: 关键 build 工具是否存在
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD bash -c 'which cmake gcc g++ colcon ninja pkg-config 2>/dev/null | wc -l | grep -qE "^(6|7)$"' \
+        || exit 1
+
+CMD ["bash"]   # 容器启动给 bash, dev 端用 build_install.sh docker run + bash -c 跑 colcon build
+
+# GeographicLib datasets (build image 也装, mavros 链接需要)
+COPY dockerfiles/geographiclib-datasets/geoids/egm96-5.pgm      /usr/share/GeographicLib/geoids/egm96-5.pgm
+COPY dockerfiles/geographiclib-datasets/geoids/egm96-5.pgm.aux.xml /usr/share/GeographicLib/geoids/egm96-5.pgm.aux.xml
+COPY dockerfiles/geographiclib-datasets/gravity/egm96.egm.cof    /usr/share/GeographicLib/gravity/egm96.egm.cof
+COPY dockerfiles/geographiclib-datasets/magnetic/emm2015.wmm.cof  /usr/share/GeographicLib/magnetic/emm2015.wmm.cof
+
+# =============================================================================
+# 4. 工作空间结构 (空, 运行时 -v host:/opt/uav_ws 挂载进来)
+# =============================================================================
+RUN mkdir -p ${UAV_WS}/src ${UAV_WS}/log ${UAV_WS}/install ${UAV_WS}/build
+
+# =============================================================================
+# 5. ROS env source (登录 + 非登录 bash 都覆盖)
+# =============================================================================
+RUN { \
+        echo '#!/bin/bash'; \
+        echo '# Auto-source ROS on any interactive shell'; \
+        echo 'source /opt/ros/${ROS_DISTRO}/setup.bash 2>/dev/null'; \
+        echo '[ -n "$PS1" ] && echo "[uav_build] ROS sourced (\$ROS_DISTRO, $UAV_WS)"'; \
+    } > /etc/profile.d/uav_ws.sh && chmod +x /etc/profile.d/uav_ws.sh
+
+# =============================================================================
+# 6. 不设 ENTRYPOINT, 用 bash -c 显式 source ROS (build_install.sh 控制)
+# =============================================================================
+WORKDIR ${UAV_WS}
+ENV IMAGE_VERSION=1.0-build
+
+# 健康检查: 关键 build 工具是否存在
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD bash -c 'which cmake gcc g++ colcon ninja pkg-config 2>/dev/null | wc -l | grep -qE "^(7|6)$"' \
+        || exit 1
+
+CMD ["bash"]
