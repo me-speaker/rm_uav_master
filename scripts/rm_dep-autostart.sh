@@ -88,6 +88,11 @@ docker exec "$CONTAINER" bash -lc "pkill -f rm_dep-watchdog 2>/dev/null; sleep 1
 docker cp "$WATCHDOG_HOST" "$CONTAINER:/opt/uav_ws/scripts/rm_dep-watchdog.sh"
 docker cp "$LAUNCH_HOST" "$CONTAINER:/opt/uav_ws/scripts/launch_odin_px4.sh"
 
+# health_led.py 也拷到 host /usr/local/bin/ (watchdog 在 host 跑, 调它 trigger 启动信号灯)
+HEALTH_LED_HOST="/home/<drone-user>/rm_ws/scripts/health_led.py"
+sudo cp "$HEALTH_LED_HOST" /usr/local/bin/health_led.py
+sudo chmod +x /usr/local/bin/health_led.py
+
 # 启动 watchdog 在 host (detached, 完全脱离 systemd service 进程组)
 # 写日志到 /var/log/uav/watchdog-YYYYMMDD.log (systemd 启的脚本无权写 /var/log/uav 的话, 自动 fallback)
 WD_LOG_DIR="${LOG_DIR:-/var/log/uav}"

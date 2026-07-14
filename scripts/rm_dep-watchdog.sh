@@ -91,5 +91,20 @@ while true; do
     log "    launch PID: $launch_pid, log: $LAUNCH_LOG"
     # 等 15s 让 ODIN SDK init + mavros 连接
     sleep 15
+
+    # 验证 3 节点都活了 → trigger health_led ready signal
+    # (避免静默失败: 飞手起飞前看到 LED 闪, 确认链路通)
+    if pgrep -f host_sdk_sample >/dev/null 2>&1 && \
+       pgrep -f mavros_node >/dev/null 2>&1 && \
+       pgrep -f slam_to_mavros_node >/dev/null 2>&1; then
+        if [[ -x /usr/local/bin/health_led.py ]]; then
+            python3 /usr/local/bin/health_led.py ready 2>&1 | tee -a "$WD_LOG" || true
+            log "✨ health_led: 3 nodes ready, LED triggered (READY × 3)"
+        else
+            log "⚠️  /usr/local/bin/health_led.py 不存在, 跳过 LED 信号"
+        fi
+    else
+        log "⚠️  3 节点还没全 ready, LED 不闪 (health_led 跳过)"
+    fi
     launched="true"
 done
