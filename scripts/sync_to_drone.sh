@@ -4,7 +4,7 @@
 # =============================================================================
 # 用法:
 #   bash scripts/sync_to_drone.sh <user>@<host>
-#   bash scripts/sync_to_drone.sh ega-orin-nano-1@192.168.100.3
+#   bash scripts/sync_to_drone.sh <user>@<drone-ip>
 #
 # 行为 (按改的内容选 flag):
 #   -k     远端 kill 旧节点 (launch 自动重启)  ← 必加, 因为 Python 进程内存缓存旧 .pyc
@@ -12,13 +12,13 @@
 #
 # 例子:
 #   # 改 slam_to_mavros_node.py (只 Python)
-#   bash scripts/sync_to_drone.sh ega-orin-nano-1@192.168.100.3 -k
+#   bash scripts/sync_to_drone.sh <user>@<drone-ip> -k
 #
 #   # 改 launch file (要 rebuild)
-#   bash scripts/sync_to_drone.sh ega-orin-nano-1@192.168.100.3 -r -k
+#   bash scripts/sync_to_drone.sh <user>@<drone-ip> -r -k
 #
 #   # 改 C++ (要 rebuild, 慢)
-#   bash scripts/sync_to_drone.sh ega-orin-nano-1@192.168.100.3 -r -k
+#   bash scripts/sync_to_drone.sh <user>@<drone-ip> -r -k
 # =============================================================================
 
 set -uo pipefail

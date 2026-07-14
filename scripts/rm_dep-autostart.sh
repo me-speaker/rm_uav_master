@@ -22,9 +22,9 @@ set -uo pipefail  # 不要 -e, 出错不退出 (要一直跑 tail -F)
 CONTAINER="${CONTAINER:-rm_dep}"
 # 脚本可能在 /usr/local/bin/ 但项目实际在 ~/rm_ws, 不要用 dirname 推断
 # 直接找 watchdog 路径 (机载电脑固定路径)
-WATCHDOG_HOST="/home/ega-orin-nano-1/rm_ws/scripts/rm_dep-watchdog.sh"
-LAUNCH_HOST="/home/ega-orin-nano-1/rm_ws/scripts/launch_odin_px4.sh"
-REPO_DIR="/home/ega-orin-nano-1/rm_ws"  # for docker cp 路径
+WATCHDOG_HOST="/home/<drone-user>/rm_ws/scripts/rm_dep-watchdog.sh"
+LAUNCH_HOST="/home/<drone-user>/rm_ws/scripts/launch_odin_px4.sh"
+REPO_DIR="/home/<drone-user>/rm_ws"  # for docker cp 路径
 WATCHDOG_INTERVAL=5   # 秒
 
 log() { echo "[rm_dep-autostart] $*"; }

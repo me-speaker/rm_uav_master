@@ -38,3 +38,4 @@ CLAUDE.md
 
 # 编译产物
 /dist
+.env

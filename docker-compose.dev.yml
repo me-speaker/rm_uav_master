@@ -1,0 +1,99 @@
+# =============================================================================
+# docker-compose.dev.yml — dev 端调试容器 (drone systemd 链路不动)
+# =============================================================================
+# 用途: dev 端模拟 drone 端运行时, 调试 ODIN/PX4/SLAM/mavros 链路.
+#       一行命令起完整容器, 不用每次手动写 --volume/--device/--network.
+#
+# 不替代 drone 端 systemd 自启 (rm_dep.service / autostart/watchdog),
+# 那套保持不变. dev compose 只用于本地开发调试.
+#
+# 用法:
+#   cp .env.example .env       # 改 ROS_DOMAIN_ID/LIDAR 等参数 (可选)
+#   docker compose -f docker-compose.dev.yml up -d
+#   docker compose -f docker-compose.dev.yml exec rm_dep bash   # 进容器
+#   docker compose -f docker-compose.dev.yml logs -f           # 看 watchdog
+#   docker compose -f docker-compose.dev.yml down             # 停
+#
+# 接 ODIN / PX4 时: 编辑下方 devices: 取消注释要的设备 (用 `docker compose config` 验证)
+# 不接硬件时: devices 留空, 容器照常起, ODIN/PX4 节点会 fail (预期)
+# =============================================================================
+
+services:
+  rm_dep:
+    # dev 端必须先 build 这个 image:
+    #   bash scripts/build_native.sh --target ega-uav:runtime-v1.0
+    # 或者从 CI 拉的 ghcr.io/${owner}/ega-uav-runtime:runtime-v1.0-stable
+    image: ega-uav:runtime-v1.0
+    container_name: rm_dep
+    hostname: rm_dep
+
+    # PX4 MAVLink USB + ROS2 DDS 需要 host network
+    network_mode: host
+
+    # ODIN USB 需要 libusb 直接访问 (跟 systemd 链路一样)
+    privileged: true
+
+    # 长生命, 手动 stop 才退 (跟 systemd Type=simple 行为一致)
+    restart: unless-stopped
+
+    # 调试用 tty + interactive shell
+    stdin_open: true
+    tty: true
+
+    # 默认 cmd: bash (用户进容器手动跑节点)
+    # 也可以: bash scripts/launch_odin_px4.sh  启完整链路
+    command: ["bash"]
+
+    volumes:
+      # --- 源码 + build 产物 (host mount, 即时生效) ---
+      - ./src:/opt/uav_ws/src
+      - ./scripts:/opt/uav_ws/scripts
+      - ./install:/opt/uav_ws/install
+      - ./build:/opt/uav_ws/build
+      - ./log:/opt/uav_ws/log
+
+      # --- udev rules (ODIN USB vendor 2207:0019) ---
+      - /etc/udev/rules.d/99-odin-usb.rules:/etc/udev/rules.d/99-odin-usb.rules:ro
+
+    # --- devices: 接 ODIN/PX4 时启用, 默认空 ---
+    # 不接硬件调试时: 留空 (容器仍能起, ODIN/PX4 节点会 fail)
+    # 接 PX4 USB (FCU MAVLink): 加 - "/dev/ttyACM0:/dev/ttyACM0"
+    # 接 ODIN: 加 - "/dev/bus/usb:/dev/bus/usb"  (整 bus 才能找到 vendor 2207:0019)
+    devices: []
+
+    environment:
+      # --- ROS + mavros 配置 (从 .env 读, 默认值这里) ---
+      - LIDAR=${LIDAR:-odin}                                      # odin | mid360
+      - FCU_URL=${FCU_URL:-/dev/ttyACM0:921600}                   # PX4 MAVLink
+      - LIVOX_LIDAR_IP=${LIVOX_LIDAR_IP:-192.168.1.1xx}           # Mid-360 IP
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+      - NOVNC_PORT=${NOVNC_PORT:-6080}
+      - VNC_PORT=${VNC_PORT:-5999}
+
+      # --- entrypoint 用到的 (runtime image 的 /ros_entrypoint.sh 读) ---
+      - ROS_DISTRO=${ROS_DISTRO:-humble}
+
+    # log driver 走 json-file (跟 systemd journald 类似, 大小限制 10MB × 3 文件)
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# =============================================================================
+# 备注:
+#
+# 1. drone 端 systemd 链路 (rm_dep.service + autostart + watchdog) 不动.
+#    只有 dev 端调试用这个 compose.
+#
+# 2. LIDAR / FCU_URL 用 .env 文件覆盖 (cp .env.example .env 改)
+#
+# 3. 接 ODIN/PX4 时: 编辑上方 devices: [] 取消注释要的设备
+#    docker compose -f docker-compose.dev.yml config  # 验证 YAML
+#
+# 4. 容器内 DEBUG 看日志:
+#    docker compose -f docker-compose.dev.yml exec rm_dep bash
+#    root@rm_dep:/# ros2 topic list
+#    root@rm_dep:/# ros2 topic hz /odin1/odometry
+# =============================================================================

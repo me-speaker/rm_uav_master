@@ -5,9 +5,9 @@
 
 用法:
     python3 scripts/sync_to_drone.py <user>@<host> [options]
-    python3 scripts/sync_to_drone.py ega-orin-nano-1@192.168.100.3 -k
-    python3 scripts/sync_to_drone.py ega-orin-nano-1@192.168.100.3 -r -k
-    python3 scripts/sync_to_drone.py ega-orin-nano-1@192.168.100.3 -s    # 同步 service 文件 (sudo cp)
+    python3 scripts/sync_to_drone.py <user>@<drone-ip> -k
+    python3 scripts/sync_to_drone.py <user>@<drone-ip> -r -k
+    python3 scripts/sync_to_drone.py <user>@<drone-ip> -s    # 同步 service 文件 (sudo cp)
 
 行为 (按改的内容选 flag):
     -k     kill 远端节点 (launch 自动重启)  ← Python 改完必加 (内存 .pyc 缓存)
@@ -16,16 +16,16 @@
 
 例子:
     # 改 slam_to_mavros_node.py (Python, 杀节点让 launch 重启)
-    python3 scripts/sync_to_drone.py ega-orin-nano-1@192.168.100.3 -k
+    python3 scripts/sync_to_drone.py <user>@<drone-ip> -k
 
     # 改 launch file (要 rebuild + 杀节点)
-    python3 scripts/sync_to_drone.py ega-orin-nano-1@192.168.100.3 -r -k
+    python3 scripts/sync_to_drone.py <user>@<drone-ip> -r -k
 
     # 改 service 文件 (sudo cp)
-    python3 scripts/sync_to_drone.py ega-orin-nano-1@192.168.100.3 -s
+    python3 scripts/sync_to_drone.py <user>@<drone-ip> -s
 
     # 改 Dockerfile (重 build 镜像, 走 deploy_to_drone.sh 不是这个)
-    bash scripts/deploy_to_drone.sh ega-orin-nano-1@192.168.100.3
+    bash scripts/deploy_to_drone.sh <user>@<drone-ip>
 """
 import sys
 import os
@@ -36,7 +36,7 @@ import paramiko
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('target', help='user@host (e.g. ega-orin-nano-1@192.168.100.3)')
+    ap.add_argument('target', help='user@host (e.g. <user>@<drone-ip>)')
     ap.add_argument('-k', '--kill', action='store_true', help='kill 远端节点 (Python 改完必加)')
     ap.add_argument('-r', '--rebuild', action='store_true', help='远端 colcon build')
     ap.add_argument('-s', '--service', action='store_true', help='sudo cp service 文件 + daemon-reload')
@@ -147,7 +147,7 @@ if [ -d .git ]; then
     echo "    最近 5 个 commit:"
     git log --oneline -5 | sed 's/^/      /'
 else
-    echo "    (~/rm_ws 没有 .git, 跳过; 一次性 init: ssh ega-orin-nano-1@192.168.100.3 'cd ~/rm_ws && git init -b main && git add -A && git commit -m init')"
+    echo "    (~/rm_ws 没有 .git, 跳过; 一次性 init: ssh <user>@<drone-ip> 'cd ~/rm_ws && git init -b main && git add -A && git commit -m init')"
 fi
 ''')
     print(so.read().decode().rstrip())

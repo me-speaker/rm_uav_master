@@ -2,7 +2,7 @@
 """verify_autostart.py — 验证 uavboard 自启 + 全链路 work
 
 用法:
-    python3 scripts/verify_autostart.py ega-orin-nano-1@192.168.100.3
+    python3 scripts/verify_autostart.py <user>@<drone-ip>
 
 输出: 8 项检查, 全 ✅ = 成功
 """

@@ -1,6 +1,6 @@
   EKF2_HGT_REF        = 3     # vision height
   EKF2_EV_CTRL        = 11
-  EKF2_EV_DELAY       = 0.01
+  EKF2_EV_DELAY       = 0.0
   EKF2_EV_NOISE_MD    = 0
   EKF2_EVP_NOISE      = 0.1
   EKF2_EVV_NOISE      = 0.1
@@ -9,6 +9,5 @@
   SYS_HAS_GPS         = 0
   SYS_HAS_MAG         = 0
   MAV_USEHILGPS       = 0
-  COM_RC_IN_MODE      = 2      # 现在实机上有rc，所以这个不管
   COM_DISARM_PRFLT    = 0
   COM_ARM_WO_GPS      = 1

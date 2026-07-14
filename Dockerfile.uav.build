@@ -65,12 +65,15 @@ RUN if [ "${ROS_APT_MIRROR}" = "tsinghua" ]; then \
             > /etc/apt/sources.list.d/ros2.list; \
     fi
 
-# 删 runtime 装的 apt ros-humble-mavros-extras (让 colcon 从 src build src/mavros/mavros_extras 带 patch)
-# 注意: --purge 用 lib 还会被 unhold 影响, 用 --auto-remove 跳过依赖检查
-# 如果 dpkg 拒绝就 skip (apt 装的 mavros-extras 不会删除 build 产物, 只是跟 src 重复)
-RUN (apt-get remove --auto-remove -y ros-humble-mavros-extras 2>&1 | tail -3) || true
+# runtime image 已装 mavros + mavros_msgs + libmavconn (mavros_node link + mavros_extras build 依赖)
+# runtime 不装 mavros-extras (由 src build 出带 patch 的版本)
+# runtime 装 mavros_msgs (apt 装) → src/mavros/mavros_msgs/ 必须加 COLCON_IGNORE 让 apt 版生效
+# (build_install.sh 在容器启动后自动 touch 这些 marker)
 
-# 装 build-only 增量包
+# 装 build-only 增量包 (apt 装的 vendor meta-pkg 自带 share/<pkg>/package.sh marker,
+# colcon enumerate 自动找到, 不用手工建 fake markers)
+# 注: 不用 libgtest-dev / libgmock-dev (会装源码到 /usr/src/ 跟 ROS vendor meta-pkg 冲突)
+# 不用 --mount=type=cache (Tegra fuse cache 在 docker buildx 里常卡)
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         # colcon build 工具链 (runtime 不需要)
         python3-colcon-common-extensions \
@@ -97,10 +100,15 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
         libusb-1.0-0-dev \
         libssl-dev \
         libopencv-contrib-dev \
-        # ROS build-time msg generators (colcon build src/* 用来编 .msg/.srv)
+        # ROS build-time msg generators (colcon build src/* 编 .msg/.srv 用)
         ros-${ROS_DISTRO}-rosidl-default-generators \
+        ros-${ROS_DISTRO}-rosidl-default-runtime \
         ros-${ROS_DISTRO}-ament-cmake-auto \
-        ros-${ROS_DISTRO}-eigen3-cmake-module \
+        # ROS 官方 vendor meta-pkg (apt 装自带 share/<pkg>/package.sh marker)
+        ros-${ROS_DISTRO}-angles \                       # mavros_extras build 依赖
+        ros-${ROS_DISTRO}-eigen3-cmake-module \          # mavros_extras cmake find_package
+        ros-${ROS_DISTRO}-gtest-vendor \                 # ament_cmake_gtest 用
+        ros-${ROS_DISTRO}-gmock-vendor \                 # ament_cmake_gmock 用
         # 调试 + 辅助
         gdb \
         strace \

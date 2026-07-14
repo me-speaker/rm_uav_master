@@ -132,17 +132,16 @@ ENV PATH=/opt/ros/${ROS_DISTRO}/bin:/usr/local/bin:/usr/local/sbin:/usr/bin:/usr
 ENV PYTHONPATH=/opt/ros/${ROS_DISTRO}/lib/python3.10/site-packages
 
 # =============================================================================
-# 2. MAVROS + MAVROS-Extras + GeographicLib datasets
+# 2. MAVROS + GeographicLib datasets (runtime 不装 mavros-extras, 让 src build)
 # =============================================================================
-# mavros 跟 ROS Desktop 是分开装的包, 这里装 (~150MB)
+# runtime 装 mavros (mavros_node 用) + mavros_msgs + libmavconn (mavros_extras build 依赖)
+# 不装 mavros-extras (apt 包): 由 dev 端 src/mavros/mavros_extras/ 编译出 (带 vision_pose patch)
+# 不装 colcon-* / rosdep / vcstool: runtime 不现场 build, dev 端 build image 才需要
 # GeographicLib 数据集: PX4 EKF2 用 vision_pose 融合时算 geoid 必须
-# pymavlink + pyserial: set_px4_mavlink.py 用 (mavros param service 在 humble broken)
-RUN --mount=type=cache,target=/var/lib/apt,sharing=locked \
-    --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/root/.cache/pip,sharing=locked \
-    apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         ros-${ROS_DISTRO}-mavros \
-        ros-${ROS_DISTRO}-mavros-extras \
+        ros-${ROS_DISTRO}-mavros-msgs \
+        ros-${ROS_DISTRO}-libmavconn \
         geographiclib-tools \
         python3-pip \
     && (pip3 install --break-system-packages pymavlink pyserial 2>/dev/null \
@@ -245,7 +244,7 @@ RUN { \
         echo '    echo "[uav_entrypoint] runtime 镜像不带 build 工具链, 不能现场 build" >&2'; \
         echo '    echo "[uav_entrypoint] 修复步骤:" >&2'; \
         echo '    echo "[uav_entrypoint]   1. dev 机: bash scripts/build_install.sh  (生成 install/)" >&2'; \
-        echo '    echo "[uav_entrypoint]   2. dev 机: bash scripts/deploy_to_drone.sh ega-orin-nano-1@192.168.100.3" >&2'; \
+        echo '    echo "[uav_entrypoint]   2. dev 机: bash scripts/deploy_to_drone.sh <user>@<drone-ip>" >&2'; \
         echo '    echo "[uav_entrypoint]   3. drone:  sudo systemctl restart rm_dep.service" >&2'; \
         echo '    exit 1'; \
         echo 'fi'; \
