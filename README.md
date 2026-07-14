@@ -1,8 +1,4 @@
-# rm_ws — 机载无人机 SLAM + PX4 + mavros 部署项目
-
-> 给未来的 Claude / 维护者 / 自己的**单页入口**: 项目是什么、怎么动、关键文档在哪.
-
----
+# ega-uav-slam — 机载无人机 SLAM + PX4 + mavros 部署项目
 
 ## 一句话
 
@@ -70,7 +66,6 @@ rm_ws/
 
 ## 文档地图
 
-- **[CLAUDE.md](./CLAUDE.md)** — 给 Claude 的 quick start, 关键设计决策, 项目架构
 - **[HANDOVER.md](./HANDOVER.md)** — 当前进度 + 卡点 + 下一步 (活文档, 看这个先)
 - **[docs/UAV_DEPLOY.md](docs/UAV_DEPLOY.md)** — 部署/飞行前 checklist
 - **[docs/PX4_ONLY_TEST.md](docs/PX4_ONLY_TEST.md)** — 无 ODIN 时怎么验证 PX4 链路
