@@ -50,11 +50,11 @@ jobs:
             # 短 SHA
             type=sha,format=short
             # master-stable (默认分支)
-            type=raw,value=runtime-v1.0-stable,enable={{is_default_branch}}
+            type=raw,value=runtime-v1.0-stable
             # tag v* 触发: 用 tag 名
             type=semver,pattern={{version}}
-            # master: latest
-            type=raw,value=latest,enable={{is_default_event}}
+            # master push: latest
+            type=raw,value=latest
 
       - name: Build and push runtime image (multi-arch)
         uses: docker/build-push-action@v5
@@ -110,10 +110,10 @@ jobs:
             # 短 SHA
             type=sha,format=short
             # master-stable
-            type=raw,value=build-v1.0-stable,enable={{is_default_branch}}
+            type=raw,value=build-v1.0-stable
             # tag v*
             type=semver,pattern={{version}}
-            type=raw,value=latest,enable={{is_default_event}}
+            type=raw,value=latest
 
       - name: Build and push dev image (FROM runtime image, multi-arch)
         uses: docker/build-push-action@v5
