@@ -14,6 +14,12 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# 必需权限: 默认 GITHUB_TOKEN 只 read packages, 不能 push image
+# 显式给 packages: write 才能 push 到 ghcr.io
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   # ============================================================================
   # 1. build-runtime: dev 端 runtime 镜像 (drone 用, runtime-only 精简)
